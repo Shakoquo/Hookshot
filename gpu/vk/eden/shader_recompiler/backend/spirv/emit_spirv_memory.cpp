@@ -78,20 +78,37 @@ void WriteStorageByCasLoop(EmitContext& ctx, const IR::Value& binding, const IR:
 }
 } // Anonymous namespace
 
-void EmitLoadGlobalU8(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+namespace {
+// (hookshot, amd-fix) 8- and 16-bit global loads: the aligned 32-bit word through the same lookup, the bits extracted.
+// OoT's 30 grass mesh programs read 16-bit records this way once their global accesses stay global (LoadGlobalS16)
+Id LoadGlobalSub(EmitContext& ctx, Id address, u32 bits, bool is_signed) {
+    if (!ctx.profile.support_int64) {
+        return ctx.Const(0u);
+    }
+    const Id low{ctx.OpUConvert(ctx.U32[1], address)};
+    const Id byte{ctx.OpBitwiseAnd(ctx.U32[1], low, ctx.Const(3u))};
+    const Id aligned{ctx.OpISub(ctx.U64, address, ctx.OpUConvert(ctx.U64, byte))};
+    const Id word{ctx.OpFunctionCall(ctx.U32[1], ctx.load_global_func_u32, aligned)};
+    const Id shift{ctx.OpShiftLeftLogical(ctx.U32[1], byte, ctx.Const(3u))};
+    return is_signed ? ctx.OpBitFieldSExtract(ctx.U32[1], word, shift, ctx.Const(bits))
+                     : ctx.OpBitFieldUExtract(ctx.U32[1], word, shift, ctx.Const(bits));
+}
+} // Anonymous namespace
+
+Id EmitLoadGlobalU8(EmitContext& ctx, Id address) {
+    return LoadGlobalSub(ctx, address, 8, false);
 }
 
-void EmitLoadGlobalS8(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+Id EmitLoadGlobalS8(EmitContext& ctx, Id address) {
+    return LoadGlobalSub(ctx, address, 8, true);
 }
 
-void EmitLoadGlobalU16(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+Id EmitLoadGlobalU16(EmitContext& ctx, Id address) {
+    return LoadGlobalSub(ctx, address, 16, false);
 }
 
-void EmitLoadGlobalS16(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+Id EmitLoadGlobalS16(EmitContext& ctx, Id address) {
+    return LoadGlobalSub(ctx, address, 16, true);
 }
 
 Id EmitLoadGlobal32(EmitContext& ctx, Id address) {

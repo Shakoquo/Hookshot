@@ -7,8 +7,8 @@ namespace mkwvk {
 
 // (out of the box every feature is off: what the game does on its own. The ini beside the executable keeps a player's choices)
 struct Options {
-    int framegen = 0;     // made frames: 0 off, or 2, 3, 4 times the game's frames
-    int pace = 0;         // frames shown on an even line (vk_framegen.cpp)
+    int framegen = 2;     // (sharkiix version: 2x by default) made frames: 0 off, or 2, 3, 4 times the game's frames
+    int pace = 1;         // (sharkiix version: on by default) frames shown on an even line (vk_framegen.cpp)
     int resolution = 0;   // the 3D's: 0 Auto (the game's dynamic resolution), else 100%, 75%, 67%, 50% of its full scale (nx2/oot_patches.py)
     int upscale = 0;      // to the window: 0 off (the plain copy to the window), 1 Catmull-Rom, 2 Lanczos
     int sharpness = 0;    // 0 to 100

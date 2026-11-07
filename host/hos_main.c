@@ -269,6 +269,167 @@ static const char *saves_dir(const char *beside) {
 }
 #endif
 
+#ifdef _WIN32
+/* (sharkiix version) "SAVE FOLDER" beside the game: a save dropped there (from Eden, Lichii, Ryujinx, a Switch, another
+   Hookshot: the folder holding slot_00, slot_01 ... and account.sav, or a folder above it, at any depth) is copied into
+   the game's saves at the start. The saves there before are kept in SAVE FOLDER\_backup <date>, what was imported goes to
+   SAVE FOLDER\_imported <date>, and a message says so. option.sav (the game's settings) is not taken.
+   HOS_NO_SAVE_FOLDER=1: off */
+static int sf_is_dir(const char *p) {
+    const DWORD a = GetFileAttributesA(p);
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+}
+static int sf_copy(const char *from, const char *to) {
+    if (!sf_is_dir(from)) return CopyFileA(from, to, FALSE) != 0;
+    if (!CreateDirectoryA(to, NULL) && !sf_is_dir(to)) return 0;
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof pattern, "%s\\*", from);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    int ok = 1;
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+            char a[MAX_PATH], b[MAX_PATH];
+            snprintf(a, sizeof a, "%s\\%s", from, fd.cFileName);
+            snprintf(b, sizeof b, "%s\\%s", to, fd.cFileName);
+            ok = sf_copy(a, b);
+        } while (ok && FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    return ok;
+}
+/* a folder holding slot_XX folders with a progress.sav in them */
+static int sf_is_save_root(const char *dir) {
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof pattern, "%s\\slot_*", dir);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    int found = 0;
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    do {
+        char p[MAX_PATH];
+        snprintf(p, sizeof p, "%s\\%s\\progress.sav", dir, fd.cFileName);
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES) found = 1;
+    } while (!found && FindNextFileA(h, &fd));
+    FindClose(h);
+    return found;
+}
+static int sf_find(const char *dir, char *out, int depth, int top) {
+    if (sf_is_save_root(dir)) {
+        snprintf(out, MAX_PATH, "%s", dir);
+        return 1;
+    }
+    if (depth <= 0) return 0;
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof pattern, "%s\\*", dir);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    int found = 0;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == '.') continue;
+        if (top && fd.cFileName[0] == '_') continue;   /* (_backup, _imported: ours) */
+        char sub[MAX_PATH];
+        snprintf(sub, sizeof sub, "%s\\%s", dir, fd.cFileName);
+        found = sf_find(sub, out, depth - 1, 0);
+    } while (!found && FindNextFileA(h, &fd));
+    FindClose(h);
+    return found;
+}
+static void save_folder_import(const char *game_dir, const char *user_dir) {
+    char sf[MAX_PATH], note[MAX_PATH], root[MAX_PATH];
+    snprintf(sf, sizeof sf, "%s\\SAVE FOLDER", game_dir);
+    CreateDirectoryA(sf, NULL);
+    snprintf(note, sizeof note, "%s\\LISEZ-MOI - READ ME.txt", sf);
+    if (GetFileAttributesA(note) == INVALID_FILE_ATTRIBUTES) {
+        FILE *f = fopen(note, "w");
+        if (f) {
+            fprintf(f,
+                "=== SAVE FOLDER (Hookshot - AMD fix, sharkiix version) ===\n\n"
+                "FRANCAIS\n"
+                "Pour jouer avec ta sauvegarde, glisse-la dans ce dossier puis lance le jeu.\n"
+                "Ca marche avec une sauvegarde d'Eden, Lichii, Ryujinx, d'une Switch ou d'un autre Hookshot :\n"
+                "mets le dossier qui contient slot_00, slot_01... et account.sav (par exemple le dossier\n"
+                "0400486024DEC000 d'un emulateur), ou directement son contenu.\n"
+                "Au lancement, le jeu l'importe tout seul et affiche un message.\n"
+                "Tes anciennes sauvegardes sont gardees dans \"_backup <date>\", rien n'est perdu.\n"
+                "Ce que tu as importe est range dans \"_imported <date>\".\n\n"
+                "ENGLISH\n"
+                "To play with your save, drop it into this folder, then start the game.\n"
+                "Works with a save from Eden, Lichii, Ryujinx, a Switch or another Hookshot:\n"
+                "put the folder holding slot_00, slot_01... and account.sav (for example an emulator's\n"
+                "0400486024DEC000 folder), or just its contents.\n"
+                "At start the game imports it by itself and shows a message.\n"
+                "Your previous saves are kept in \"_backup <date>\": nothing is lost.\n"
+                "What was imported is moved to \"_imported <date>\".\n");
+            fclose(f);
+        }
+    }
+    if (!sf_find(sf, root, 6, 1)) return;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char stamp[64], target[MAX_PATH], backup[MAX_PATH], done[MAX_PATH];
+    snprintf(stamp, sizeof stamp, "%04d-%02d-%02d %02dh%02d-%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    CreateDirectoryA(user_dir, NULL);
+    snprintf(target, sizeof target, "%s\\save", user_dir);
+    CreateDirectoryA(target, NULL);
+    snprintf(target, sizeof target, "%s\\save\\5a3c9e1f0b7d24680000000000000001", user_dir);
+    snprintf(backup, sizeof backup, "%s\\_backup %s", sf, stamp);
+    if (sf_is_dir(target) && !sf_copy(target, backup)) {
+        hos_log("save folder: the saves could not be backed up into %s: nothing imported", backup);
+        MessageBoxA(NULL, "SAVE FOLDER: the current saves could not be backed up, so nothing was imported.\n"
+                          "SAVE FOLDER : les sauvegardes actuelles n'ont pas pu etre copiees, rien n'a ete importe.",
+                    HOS_GAME_TITLE, MB_OK | MB_ICONWARNING | MB_TOPMOST);
+        return;
+    }
+    CreateDirectoryA(target, NULL);
+    int slots = 0, ok = 1;
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof pattern, "%s\\*", root);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+            const int slot = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !strncmp(fd.cFileName, "slot_", 5);
+            if (!slot && _stricmp(fd.cFileName, "account.sav")) continue;   /* (option.sav: the game's own settings stay) */
+            char a[MAX_PATH], b[MAX_PATH];
+            snprintf(a, sizeof a, "%s\\%s", root, fd.cFileName);
+            snprintf(b, sizeof b, "%s\\%s", target, fd.cFileName);
+            if (!sf_copy(a, b)) ok = 0;
+            else slots += slot;
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    /* what was imported: everything in SAVE FOLDER but ours, moved aside so the next start does not import it again */
+    snprintf(done, sizeof done, "%s\\_imported %s", sf, stamp);
+    CreateDirectoryA(done, NULL);
+    snprintf(pattern, sizeof pattern, "%s\\*", sf);
+    h = FindFirstFileA(pattern, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..") || fd.cFileName[0] == '_' ||
+                !_stricmp(fd.cFileName, "LISEZ-MOI - READ ME.txt"))
+                continue;
+            char a[MAX_PATH], b[MAX_PATH];
+            snprintf(a, sizeof a, "%s\\%s", sf, fd.cFileName);
+            snprintf(b, sizeof b, "%s\\%s", done, fd.cFileName);
+            MoveFileExA(a, b, 0);
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    hos_log("save folder: %d slots imported from %s (%s), the saves before kept in %s", slots, root,
+            ok ? "all copied" : "some failed", backup);
+    char msg[1600];
+    snprintf(msg, sizeof msg,
+             "SAVE FOLDER: %d save slot(s) imported%s.\nYour previous saves are kept in:\n%s\n\n"
+             "SAVE FOLDER : %d emplacement(s) de sauvegarde importe(s)%s.\nTes anciennes sauvegardes sont gardees dans :\n%s",
+             slots, ok ? "" : " (some files failed)", backup, slots, ok ? "" : " (certains fichiers ont echoue)", backup);
+    MessageBoxA(NULL, msg, HOS_GAME_TITLE, MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
+}
+#endif
+
 /* hookshot_env.txt beside the game: NAME=VALUE lines set as environment variables before anything reads them, for the
    switches players are asked to test (RX_VK_NOOPT and the rest). Lines starting with # are notes. On Linux this runs
    before the window, so HOS_HEADLESS and HOS_WINDOW_SIZE are already set when the window is made. */
@@ -366,6 +527,14 @@ static int game_main(int argc, char **argv) {
     if (getenv("HOS_TRACE")) hos_trace = 1;
     if (!hos_user_dir) hos_user_dir = "user";
     CreateDirectoryA(hos_user_dir, NULL);
+#ifdef _WIN32
+    if (beside_user[0] && hos_user_dir == beside_user && !getenv("HOS_NO_SAVE_FOLDER")) {   /* (sharkiix version) */
+        char game_dir[MAX_PATH];
+        snprintf(game_dir, sizeof game_dir, "%s", beside_user);
+        char *slash = strrchr(game_dir, SEP);
+        if (slash) *slash = 0, save_folder_import(game_dir, hos_user_dir);
+    }
+#endif
     if (!reserve_guest()) {
         fprintf(stderr, "cannot reserve the guest window\n");
         return 1;

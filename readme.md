@@ -9,6 +9,37 @@
   <br>
 </h1>
 
+> ## AMD fix — sharkiix version
+>
+> This is a fork of Hookshot with fixes made and tested on an **AMD Radeon RX 9060 XT** (Windows 11). Build it exactly like
+> the official Hookshot, from your own copy of the game: nothing of the game is included here.
+>
+> **What changes compared to the official build**
+> - **Shader fixes**: graphics programs that failed to translate (mesh "scratch registers", jump tables, 8- and 16-bit memory
+>   reads for the grass) now translate: 0 failed programs left, apart from the upscaler networks AMD cards cannot run.
+> - **Frame generation (2x) and frame pacing are on by default** (change them with <kbd>Insert</kbd> in game).
+> - **SAVE FOLDER**: a folder named `SAVE FOLDER` is made beside the game. Drop a save in it (from Eden, Lichii, Ryujinx, a Switch or
+>   another Hookshot: the folder holding `slot_00`, `slot_01`... and `account.sav`, for example an emulator's `0400486024DEC000`
+>   folder) and start the game: it is imported, your previous saves are kept in `SAVE FOLDER\_backup <date>`, and a message
+>   confirms it. Instructions in French and English are in `SAVE FOLDER\LISEZ-MOI - READ ME.txt`.
+> - **No official update offer** at start: an official update would rebuild the game without these fixes
+>   (`HOOKSHOT_UPDATE_CHECK=1` in `hookshot_env.txt` turns it back on).
+> - Includes the latest official fixes (brightness flicker fix, faster dispatch and descriptor clocks, FPS overlay order).
+>
+> **Known issues (same as the official build on AMD cards):** tree canopies are missing in Kokiri forest (official issue #35),
+> and the grass in Hyrule Field can show dark moving patches. The first time a new effect appears the game can pause for a
+> moment while it is prepared; it does not happen again after that.
+>
+> ---
+>
+> **FR —** Fork de Hookshot corrigé et testé sur **AMD Radeon RX 9060 XT**. Il se construit comme le Hookshot officiel, à partir de
+> ta propre copie du jeu (aucun fichier du jeu n'est inclus). Génération d'images ×2 et rythme d'images activés par défaut.
+> **SAVE FOLDER** : glisse ta sauvegarde (Eden, Lichii, Ryujinx, Switch, autre Hookshot) dans le dossier `SAVE FOLDER` à côté du jeu,
+> lance le jeu : elle est importée automatiquement et tes anciennes sauvegardes sont gardées dans `_backup <date>`.
+> Problèmes connus sur AMD : feuilles des arbres absentes dans la forêt Kokiri, taches sombres mouvantes dans l'herbe de la plaine.
+
+
+
 <h4 align="center">The Legend of Zelda: Ocarina of Time (Nintendo Switch 2) running natively on Windows & Linux, with no emulator.
 </h4>
 

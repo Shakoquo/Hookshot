@@ -78,6 +78,8 @@ static int latest_tag(char *tag, size_t cap) {
 }
 
 void hos_update_check(void) {
+    // (sharkiix version: off unless HOOKSHOT_UPDATE_CHECK=1: an official update would build the folder again without the AMD fixes)
+    if (!getenv("HOOKSHOT_UPDATE_CHECK") || !strcmp(getenv("HOOKSHOT_UPDATE_CHECK"), "0")) return;
     if (getenv("HOOKSHOT_NO_UPDATE_CHECK") && strcmp(getenv("HOOKSHOT_NO_UPDATE_CHECK"), "0")) return;
     wchar_t dir[MAX_PATH], file[MAX_PATH + 64];
     DWORD n = GetModuleFileNameW(NULL, dir, MAX_PATH);
