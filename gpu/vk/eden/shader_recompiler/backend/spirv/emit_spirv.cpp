@@ -355,8 +355,9 @@ void DefineEntryPoint(const IR::Program& program, EmitContext& ctx, Id main) {
         ctx.AddExecutionMode(main, spv::ExecutionMode::OutputVertices, program.mesh.max_vertices);
         ctx.AddExecutionMode(main, spv::ExecutionMode::OutputPrimitivesEXT,
                              program.mesh.max_primitives);
-        ctx.AddExecutionMode(main, program.mesh.topology == 1 ? spv::ExecutionMode::OutputLinesEXT
-                                                              : spv::ExecutionMode::OutputTrianglesEXT);
+        ctx.AddExecutionMode(main, program.mesh.Corners() == 1   ? spv::ExecutionMode::OutputPoints
+                                   : program.mesh.Corners() == 2 ? spv::ExecutionMode::OutputLinesEXT
+                                                                 : spv::ExecutionMode::OutputTrianglesEXT);
         break;
     case Stage::TessellationControl:
         execution_model = spv::ExecutionModel::TessellationControl;
@@ -567,6 +568,10 @@ void SetupCapabilities(const Profile& profile, const Info& info, EmitContext& ct
     if (info.uses_cooperative_matrix && !mma_software) {
         ctx.AddExtension("SPV_KHR_cooperative_matrix");
         ctx.AddCapability(spv::Capability::CooperativeMatrixKHR);
+        ctx.AddExtension("SPV_KHR_vulkan_memory_model");
+        ctx.AddCapability(spv::Capability::VulkanMemoryModel);
+        ctx.AddCapability(spv::Capability::VulkanMemoryModelDeviceScope);
+        ctx.SetMemoryModel(spv::MemoryModel::VulkanKHR);
     }
     if (info.uses_cooperative_matrix && mma_software) {   // (hookshot: DefineSoftwareMatrixFunction's)
         ctx.AddCapability(spv::Capability::GroupNonUniform);

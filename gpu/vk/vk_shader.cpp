@@ -43,6 +43,7 @@
 
 #include "vk_internal.h"
 #include "vk_jobs.h"
+#include "vk_draw.h"
 
 // (EvilOOT, RX_VK_PTR_DIAG) the pointer pass's counts for this thread's translations
 // (global_memory_to_storage_buffer_pass.cpp, declared by hand so no Eden header changes)
@@ -105,7 +106,7 @@ struct Code {
     uint32_t texture_bound = ~0u;   // the bank native TEX instructions name (~0: none; TEXS take the stage's own)
     bool isbe = false;              // an NVN2 task (stage 6) or mesh (stage 7) program: it writes the internal stage buffer
     // (task / mesh: control section +0x58 threads 15:0, payload bytes 31:16; +0x60 max primitives 15:0, max vertices
-    // 31:16; +0x5f the output topology, 3 triangles)
+    // 31:16; +0x5f the output topology, 1 points, 3 triangles)
     uint32_t mesh_threads = 0, payload_bytes = 0, max_vertices = 0, max_primitives = 0, topology = 0;
     bool header_only = false;       // a graphics header and no code (NVN2's per-primitive output map of a mesh program)
     uint8_t sph[sizeof(Shader::ProgramHeader)]{};
@@ -1200,7 +1201,11 @@ void miss_note(uint64_t key, const char* what, uint64_t a, uint64_t b, const Nvn
 }
 
 std::array<u32, 3> mesh_registers_of(const Code* task, const Code& mesh) {
-    const uint32_t topology = mesh.topology == 3 ? 4 : mesh.topology;   // (triangles)
+    // (the control section's topology in GL's numbers: 3 triangles; 1 points, not lines. OoT's four mesh programs with a 1 (the grass
+    // drawn into the 2400 x 2400 shadow map around Link) write one index byte per primitive, the primitive count = their vertex
+    // count, and a point size. Read as lines, each joined vertex 2i to 2i + 1 of its meshlet: a mesh of long thin dark stripes on
+    // the ground, the water and Link around him, on AMD; Hookshot issue 302)
+    const uint32_t topology = mesh.topology == 3 ? 4 : mesh.topology == 1 ? 0 : mesh.topology;
     const uint32_t lines = task ? (task->payload_bytes + 127) / 128 : 0;
     // (the larger of the two for both: the control section's pair is not always vertices and primitives in that order. The door's
     // says 126 and 64, where its code writes 64 vertices and up to 128 primitives; held to 64, a meshlet's other primitives were
@@ -1293,6 +1298,13 @@ void translate_mesh_into(Program& p, const NvnState& s, const Code* task, const 
                 if (Shader::IR::IsGeneric(attribute))
                     frt.per_primitive_generics.set(Shader::IR::GenericAttributeIndex(attribute));
             }
+            // (points: a generic the fragment program reads and the mesh program never writes is the point sprite's coordinate,
+            // as the hardware replaces it. OoT's grass shadow reads its alpha mask at generic 5's (s, t): left at (0, 0, 0, 1),
+            // each point was a filled square in the shadow map instead of a tuft)
+            if (mesh_t->program.mesh.topology == 0)
+                for (size_t i = 0; i < Shader::IR::NUM_GENERICS; i++)
+                    if (fs->program.info.loads.Generic(i) && !mesh_t->program.info.stores.Generic(i))
+                        frt.point_coord_generics.set(i);
             for (int i = 0; i < 8; i++) frt.color_output_types[i] = static_cast<Shader::AttributeType>(color_types[i]);
             const std::vector<uint32_t> fspirv = Shader::Backend::SPIRV::EmitSPIRV(profile(), frt, fs->program, bindings);
             kept.push_back(fspirv);
@@ -1455,25 +1467,71 @@ uint64_t compute_code_key(const NvnState& s) {
     return 0;
 }
 
+/// The last answer for this serial, these stages, these bindings and these vertex inputs
+bool prog_same(int kind, uint64_t serial, uint64_t stages, uint64_t bind, uint64_t reg, uint64_t ub, int nvattr,
+               const uint32_t* vattr, const uint8_t* ct, int ckind, uint64_t cserial, uint64_t cstages, uint64_t cbind,
+               uint64_t creg, uint64_t cub, int cnvattr, const uint32_t* cvattr, const uint8_t* cct) {
+    if (kind != ckind || serial != cserial || stages != cstages || bind != cbind || reg != creg || ub != cub ||
+        nvattr != cnvattr)
+        return false;
+    for (int i = 0; i < 16; i++)
+        if (vattr[i] != cvattr[i]) return false;
+    for (int i = 0; i < 8; i++)
+        if (ct[i] != cct[i]) return false;
+    return true;
+}
+uint64_t prog_stage_sig(const nvn_prog& p) {
+    uint64_t h = (uint64_t)p.nstage << 32 | p.magic;
+    for (int i = 0; i < 6; i++) h = h * 1099511628211ull ^ p.sd[i].data ^ (p.sd[i].control << 1);
+    return h ^ p.serial;
+}
+struct ProgFast {
+    bool on = false;
+    int kind = 0;
+    uint64_t serial = 0, stages = 0, bind = 0, reg = 0, ub = 0;
+    int nvattr = 0;
+    uint32_t vattr[16]{};
+    uint8_t ct[8]{};
+    const Program* p = nullptr;
+};
+thread_local ProgFast prog_fast[2];
+
 const Program* program_for(const NvnState& s, ProgramKind kind, const uint8_t color_types[8]) {
     if (!s.has_prog) return nullptr;
     if (kind == ProgramKind::Mesh) return mesh_program_for(s, color_types);
     const bool compute = kind == ProgramKind::Compute;
-    const uint64_t key = (compute ? 0x5EED : pick_inputs(s, color_types)) * 1099511628211ull ^ s.prog.serial;
-    Pick& pk = picks[key];
     static int64_t st_hit, st_none, st_differ, st_calls;   // (logged now and then: how the cache does)
     if (++st_calls % 200000 == 0)
         logf("vk: program picks: %lld kept, %lld new, %lld with other textures (of %lld)", (long long)st_hit,
              (long long)st_none, (long long)st_differ, (long long)st_calls);
+    const uint64_t stages = prog_stage_sig(s.prog);
+    const uint64_t bind = s.bind_gen, reg = registrations_generation(), ub = ub_generation();
+    for (const ProgFast& f : prog_fast)   // (the draw before this one, and the one that took turns with it)
+        if (f.on && f.p && f.p->ready.load(std::memory_order_acquire) && !f.p->failed &&
+            prog_same((int)kind, s.prog.serial, stages, bind, reg, ub, s.nvattr, s.vattr, color_types, f.kind, f.serial,
+                      f.stages, f.bind, f.reg, f.ub, f.nvattr, f.vattr, f.ct))
+            return st_hit++, f.p;
+    const uint64_t key = (compute ? 0x5EED : pick_inputs(s, color_types)) * 1099511628211ull ^ s.prog.serial;
+    Pick& pk = picks[key];
+    auto keep = [&](const Program* p) {
+        if (!p || !p->ready.load(std::memory_order_acquire) || p->failed) return p;
+        if (!(prog_fast[0].on && prog_fast[0].p == p)) prog_fast[1] = prog_fast[0];
+        ProgFast& f = prog_fast[0];
+        f.on = true, f.kind = (int)kind, f.serial = s.prog.serial, f.stages = stages, f.bind = bind, f.reg = reg, f.ub = ub;
+        f.nvattr = s.nvattr, f.p = p;
+        std::memcpy(f.vattr, s.vattr, sizeof f.vattr);
+        std::memcpy(f.ct, color_types, sizeof f.ct);
+        return p;
+    };
     if (pk.p && pk.p->ready.load(std::memory_order_acquire) && !pk.p->failed) {
-        if (pk.p->answers.empty()) return st_hit++, pk.p;
+        if (pk.p->answers.empty()) return st_hit++, keep(pk.p);
         static thread_local std::vector<uint32_t> now;
         answer_handles(s, *pk.p, now);
-        if (now == pk.handles) return st_hit++, pk.p;
+        if (now == pk.handles) return st_hit++, keep(pk.p);
         st_differ++;
         if (still_valid(s, *pk.p)) {   // (other textures of the same types: the same variant)
             pk.handles.swap(now);
-            return pk.p;
+            return keep(pk.p);
         }
     } else {
         st_none++;
@@ -1486,7 +1544,7 @@ const Program* program_for(const NvnState& s, ProgramKind kind, const uint8_t co
         pk.p = nullptr;
     }
     if (picks.size() > 65536) picks.clear();
-    return picked;
+    return keep(picked);
 }
 
 const Program* program_pick(const NvnState& s, ProgramKind kind, const uint8_t color_types[8]) {

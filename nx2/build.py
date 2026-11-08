@@ -145,10 +145,11 @@ def vk_sources():
 
 
 def cpm_dirs():
-    """Eden's CPM package caches, read only: RX_CPM, this project's work/eg clone, mkw-recomp's, the shared
-    Eglantine checkout's (Vulkan and SPIR-V headers, VMA, FFmpeg)"""
+    """CPM packages: RX_CPM, packaged tools/cpm, then legacy project caches.
+    The packages provide Vulkan and SPIR-V headers, VMA and FFmpeg."""
     eden_ns2 = os.path.dirname(kit.ROOT)
-    return [d for d in (os.environ.get("RX_CPM"), os.path.join(kit.WORK, "eg", ".cache", "cpm"),
+    return [d for d in (os.environ.get("RX_CPM"), os.path.join(kit.ROOT, "cpm"),
+                        os.path.join(kit.WORK, "eg", ".cache", "cpm"),
                         os.path.join(eden_ns2, "mkw-recomp", "work", "eg", ".cache", "cpm"),
                         os.path.join(eden_ns2, "Eglantine", ".cache", "cpm")) if d and os.path.isdir(d)]
 
@@ -231,7 +232,31 @@ WRITE_TRACK = [] if os.environ.get("RX_SOFT_WRITE_WATCH") == "0" else ["-DA64_WR
 # MOVBE; Haswell and Zen 1 on). With FMA the FPX1 fast paths cover double-precision FMA (RECOMP_FPX_FMA64; it took
 # the exact software body on baseline x86-64) and the bit counts are single instructions. No contraction, so a C
 # expression is rounded as written (the exact bodies and FPX1's proofs assume it). RX_MARCH=x86-64: the old baseline
-CPU = ["-march=" + os.environ.get("RX_MARCH", "x86-64-v3"), "-ffp-contract=off"]
+# (issue 363: a Xeon E5-2667 v2 (Ivy Bridge, no AVX2) built the game and then stopped at its first AVX2 instruction,
+# 0xc000001d. The game is built on the PC it runs on: a CPU without x86-64-v3's features gets x86-64-v2, or x86-64)
+def host_march():
+    want = ("avx2", "fma", "bmi2", "movbe")
+    try:
+        if os.name == "nt":
+            import ctypes
+            pf = ctypes.windll.kernel32.IsProcessorFeaturePresent
+            # (PF_AVX2_INSTRUCTIONS_AVAILABLE 40; PF_SSE4_2_INSTRUCTIONS_AVAILABLE 38. Windows reports no FMA/BMI2 bit, but
+            # every AVX2 CPU has them, as x86-64-v3 counts them together)
+            if pf(40):
+                return "x86-64-v3"
+            return "x86-64-v2" if pf(38) else "x86-64"
+        flags = open("/proc/cpuinfo").read().split("flags", 1)[1].split(chr(10), 1)[0].split()
+        if all(f in flags for f in want):
+            return "x86-64-v3"
+        return "x86-64-v2" if all(f in flags for f in ("sse4_2", "popcnt", "ssse3")) else "x86-64"
+    except Exception:
+        return "x86-64-v3"
+
+
+MARCH = os.environ.get("RX_MARCH") or host_march()
+if MARCH != "x86-64-v3":
+    print("build: this CPU has no AVX2: the game is built for %s (a little slower)" % MARCH, flush=True)
+CPU = ["-march=" + MARCH, "-ffp-contract=off"]
 
 
 def flags(gen, rt64, opt, polls):
@@ -256,8 +281,9 @@ def write_info(out):
 
 def object_key(src, fl, deps):
     """What an object depends on: its source, the flags without the include folders (the two builds' generated
-    headers are in different folders; their contents are in deps), and the headers"""
-    return hashlib.sha1(open(src, "rb").read() + " ".join(f for f in fl if not f.startswith("-I")).encode() +
+    headers are in different folders; their contents are in deps), and the headers. (issue 565) The builder's own folder
+    is left out of the flags (an -include names a header in it): it is versions\\<tag>\\..., another with each release"""
+    return hashlib.sha1(open(src, "rb").read() + " ".join(f.replace(kit.ROOT, "<root>") for f in fl if not f.startswith("-I")).encode() +
                         deps).hexdigest()
 
 
@@ -377,7 +403,10 @@ def main():
     if PGO == "gen":
         hot_fl = [f if f != "-O2" else "-O1" for f in hot_fl] + ["-fprofile-instr-generate", "-mllvm", "-disable-vp=true"]
     elif PGO:
-        hot_fl = hot_fl + ["-fprofile-instr-use=" + PGO]
+        # (the profile's contents in the flags the object key hashes: its path alone stays the same across releases, so an update with a
+        # new profile kept the hot code built from the old one)
+        with open(PGO, "rb") as f:
+            hot_fl = hot_fl + ["-fprofile-instr-use=" + PGO, "-DHOOKSHOT_PROFILE_SHA1=" + hashlib.sha1(f.read()).hexdigest()[:16]]
     jobs = [(cc, s, os.path.join(obj_dir, os.path.basename(s)[:-2] + ".o"),
              hot_fl if os.path.basename(s).startswith("code_hot") else fl,
              shim_deps if os.path.dirname(s) == NX2_RT else deps) for s in srcs]
@@ -472,23 +501,36 @@ def main():
         jobs = list(vk_jobs)
     print("%d files, %d jobs, %s" % (len(jobs), a.jobs, " ".join(f for f in fl if f.startswith("-D") or f.startswith("-O"))),
           flush=True)
-    t0, failed = time.time(), 0
+    t0, failed = time.time(), []
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
         # (as each ends, not in order: the builder app shows progress from these lines, and the biggest file comes first)
         for src, secs, err in (f.result() for f in concurrent.futures.as_completed([ex.submit(compile_one, j) for j in jobs])):
             size = os.path.getsize(src) >> 20
             if err:
-                failed += 1
-                print("FAILED %s (%d MB, %.0fs):\n%s" % (os.path.basename(src), size, secs, err), flush=True)
+                failed.append(src)
+                print("not compiled yet: %s (%d MB, %.0fs), tried again alone at the end:\n%s"
+                      % (os.path.basename(src), size, secs, err[-1500:]), flush=True)
             else:
                 print("  %-16s %4d MB  %6.0fs  (%.0fs)" % (os.path.basename(src), size, secs, time.time() - t0), flush=True)
-    print("compiled in %.0fs, %d failed" % (time.time() - t0, failed), flush=True)
-    if failed:
+    # (a compiler that ran out of memory beside the others dies "due to signal": a player's 24 MB code_021.c, 2026-11-08. The
+    # files that failed are compiled again one at a time, with all the memory, before the build gives up)
+    still = 0
+    for src in failed:
+        job = next(j for j in jobs if j[1] == src)
+        _, secs, err = compile_one(job)
+        size = os.path.getsize(src) >> 20
+        if err:
+            still += 1
+            print("FAILED %s (%d MB, %.0fs, alone too):\n%s" % (os.path.basename(src), size, secs, err), flush=True)
+        else:
+            print("  %-16s %4d MB  %6.0fs  (%.0fs, alone)" % (os.path.basename(src), size, secs, time.time() - t0), flush=True)
+    print("compiled in %.0fs, %d failed" % (time.time() - t0, still), flush=True)
+    if still:
         return 1
     vk_objs = {j[2] for j in vk_jobs}
     objs = [j[2] for j in jobs if j[2] not in vk_objs]
     rsp = os.path.join(out, "objs.rsp")
-    open(rsp, "w").write("\n".join('"%s"' % o.replace("\\", "/") for o in objs))
+    open(rsp, "w", encoding="utf-8").write("\n".join('"%s"' % o.replace("\\", "/") for o in objs))
     if a.lib:
         lib = os.path.join(out, "hookshot_game.lib")
         subprocess.run([toolchain.lld_link(), "/lib", "/out:" + lib, "@" + rsp], check=True)
@@ -542,13 +584,20 @@ def main():
         if os.path.exists(sdl) and (not os.path.exists(sdl_dst) or os.path.getsize(sdl_dst) != os.path.getsize(sdl)):
             import shutil
             shutil.copyfile(sdl, sdl_dst)
+        # (SDL2.dll is sdl2-compat: the SDL2 calls on SDL3, whose controller support is current (a Steam Controller user's
+        # report). It loads SDL3.dll from beside it)
+        sdl3 = os.path.join(kit.HERE, "..", "third_party", "sdl2", "SDL3.dll")
+        sdl3_dst = os.path.join(out, "SDL3.dll")
+        if os.path.exists(sdl3) and (not os.path.exists(sdl3_dst) or os.path.getsize(sdl3_dst) != os.path.getsize(sdl3)):
+            import shutil
+            shutil.copyfile(sdl3, sdl3_dst)
     if vk_prebuilt and a.standalone and not a.only:
         import shutil
         shutil.copyfile(vk_prebuilt, os.path.join(out, VK_LIB))
     if vk_jobs:   # (hookshot_vk.dll beside the exe: loaded by host/rx_backend.c with RX_BACKEND=vulkan)
         vdll = os.path.join(out, VK_LIB)
         vrsp = os.path.join(out, "vk_objs.rsp")
-        open(vrsp, "w").write("\n".join('"%s"' % j[2].replace("\\", "/") for j in vk_jobs))
+        open(vrsp, "w", encoding="utf-8").write("\n".join('"%s"' % j[2].replace("\\", "/") for j in vk_jobs))
         t = time.time()
         if LINUX:   # (its C++ runtime inside: the game folder runs where the AppImage's sysroot is older than the system)
             link = [toolchain.need(toolchain.find("clang++"))] + target() + [
