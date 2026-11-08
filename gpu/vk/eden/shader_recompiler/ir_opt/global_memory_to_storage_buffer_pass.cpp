@@ -584,6 +584,7 @@ bool MixesLoadedPointer(const IR::Value& value) {
 }
 
 thread_local bool g_follow_stage = false;   // (hookshot: the program being translated is compute, where the page table is)
+thread_local bool g_graphics_stage = false;   // (sharkiix: the program being translated is a geometry stage: vertex, tessellation, geometry, task, mesh)
 
 /// Collects the storage buffer used by a global memory instruction and the instruction itself
 void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info) {
@@ -665,6 +666,15 @@ void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info) 
         // c1 in the address is an offset (OoT's culling passes: a pointer loaded from memory + c1[0] = 12, taken for the
         // base: their results went to a buffer at address 12). Left to the run-time search, which finds the real one.
         if (storage_buffer && storage_buffer->index == 1) {
+            storage_buffer.reset();
+        }
+        // (sharkiix, from BernabeCR93 in upstream issue 667) Same for a graphics stage's address tracked to another constant
+        // buffer than c0 while part of it comes from memory: the far-foliage and mesh programs (95db514a35353e28, d905f52b7517c681,
+        // 51183fe750d5d0c8...) took float constants for a buffer address ("storage buffer NOT bound (reads zeros)", c5+0x60),
+        // read zeros and drew the plants without colour (white/sky-blue "mirror" ferns, glowing flowers). Left to the run-time
+        // search. RX_VK_NO_CBUF_LOAD_RULE=1: off
+        static const bool cbuf_load_rule{std::getenv("RX_VK_NO_CBUF_LOAD_RULE") == nullptr};
+        if (cbuf_load_rule && storage_buffer && storage_buffer->index != 0 && g_graphics_stage && Origins(inst.Arg(0)).load) {
             storage_buffer.reset();
         }
         if (!storage_buffer) {
@@ -819,6 +829,8 @@ void Replace(IR::Block& block, IR::Inst& inst, const IR::U32& storage_index,
 void GlobalMemoryToStorageBufferPass(IR::Program& program, const HostTranslateInfo& host_info) {
     static const bool no_mesh{std::getenv("RX_VK_FOLLOW_MESH") == nullptr};
     g_follow_stage = program.stage == Stage::Compute || (!no_mesh && (program.stage == Stage::Task || program.stage == Stage::Mesh));
+    // (geometry stages only: with the fragment stage too, the sky drew black rectangles and the lighting went too bright at the castle)
+    g_graphics_stage = program.stage != Stage::Compute && program.stage != Stage::Fragment;
     g_origins.clear();   // (EvilOOT: Origins' walk, kept per program)
     StorageInfo info;
     for (IR::Block* const block : program.post_order_blocks) {
