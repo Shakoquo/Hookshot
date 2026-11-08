@@ -454,6 +454,8 @@ Shader::Profile make_profile() {
     p.support_multi_viewport = true;
     p.support_sampled_image_array_nonuniform_indexing = true;
     p.warp_size_potentially_larger_than_guest = false;
+    // (RX_VK_SHUFFLE_BCAST=1, a test: a shuffle by a run-time lane as broadcasts of each of the 32 lanes, picked by the lane)
+    p.has_broken_spirv_subgroup_shuffle = getenv("RX_VK_SHUFFLE_BCAST") && atoi(getenv("RX_VK_SHUFFLE_BCAST")) != 0;
     p.lower_left_origin_mode = false;
     p.need_declared_frag_colors = false;
     p.max_subgroup_size = 32;
@@ -814,7 +816,7 @@ uint64_t disk_stamp() {
     };
     add(abi, sizeof abi);
     for (char** e = _environ; e && *e; e++)
-        for (const char* pre : {"RX_VK_OOT", "RX_VK_MMA", "RX_VK_NATIVE", "RX_VK_NAN", "RX_VK_TASK_CAP", "RX_VK_NETWORK", "RX_VK_GP", "RX_VK_FOLLOW", "RX_VK_NO_FOLLOW", "RX_VK_NO_F16", "RX_VK_SHARED", "RX_VK_MESH", "EDEN_"})
+        for (const char* pre : {"RX_VK_OOT", "RX_VK_MMA", "RX_VK_NATIVE", "RX_VK_NAN", "RX_VK_TASK_CAP", "RX_VK_NETWORK", "RX_VK_GP", "RX_VK_FOLLOW", "RX_VK_NO_FOLLOW", "RX_VK_NO_F16", "RX_VK_SHARED", "RX_VK_MESH", "RX_VK_SHUFFLE", "EDEN_"})
             if (!strncmp(*e, pre, strlen(pre))) add(*e, strlen(*e));
     return h;
 }

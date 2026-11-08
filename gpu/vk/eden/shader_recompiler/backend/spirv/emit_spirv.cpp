@@ -5,6 +5,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdlib>
+#include <map>
 #include <span>
 #include <tuple>
 #include <type_traits>
@@ -141,6 +143,70 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
         const auto it{std::find(program.blocks.begin(), program.blocks.end(), b)};
         return static_cast<u32>(it - program.blocks.begin());
     }};
+    // (RX_VK_VALUE_PROBE=<IR dump numbers, up to 8, comma list>, with the block probe's switches: each listed value as it was
+    // computed, by up to 64 invocations, in the miss log's words 3008 + k*128 (value, then workgroup x << 8 | local x),
+    // their count in word 3000 + k. The numbers are IR::DumpProgram's, rebuilt the same way: the dump is of this program.)
+    std::map<const IR::Inst*, u32> value_probe;
+    if (probe) {
+        if (const char* list{std::getenv("RX_VK_VALUE_PROBE")}) {
+            std::vector<size_t> want;
+            for (const char* s{list}; *s;) {
+                char* end{};
+                const unsigned long n{std::strtoul(s, &end, 10)};
+                if (end == s) {
+                    ++s;
+                    continue;
+                }
+                if (want.size() < 8) want.push_back(n);
+                s = end;
+            }
+            size_t index{program.blocks.size()};
+            std::map<const IR::Inst*, size_t> numbers;
+            const auto number{[&](const IR::Inst* i) {
+                if (numbers.emplace(i, index + 1).second) ++index;
+            }};
+            for (const IR::Block* const b : program.blocks) {
+                for (const IR::Inst& inst : *b) {
+                    if (IR::TypeOf(inst.GetOpcode()) != IR::Type::Void) number(&inst);
+                    for (size_t a = 0; a < inst.NumArgs(); ++a) {
+                        const IR::Value arg{inst.Arg(a)};
+                        if (!arg.IsEmpty() && (!arg.IsImmediate() || arg.IsIdentity())) number(arg.Inst());
+                    }
+                }
+            }
+            for (const auto& [i, n] : numbers)
+                for (size_t k = 0; k < want.size(); ++k)
+                    if (want[k] == n) value_probe.emplace(i, static_cast<u32>(k));
+        }
+    }
+    const auto record_value{[&](IR::Inst& inst, u32 k) {
+        const Id v{inst.Definition<Id>()};
+        if (!Sirit::ValidId(v)) return;
+        Id w{};
+        switch (inst.Type()) {
+        case IR::Type::U1: w = ctx.OpSelect(ctx.U32[1], v, ctx.Const(1U), ctx.u32_zero_value); break;
+        case IR::Type::U32: w = v; break;
+        case IR::Type::F32: w = ctx.OpBitcast(ctx.U32[1], v); break;
+        case IR::Type::U64: w = ctx.OpUConvert(ctx.U32[1], v); break;
+        default: return;
+        }
+        const Id dev{ctx.Const(static_cast<u32>(spv::Scope::Device))};
+        const Id count_ptr{ctx.OpAccessChain(ctx.storage_types.U32.element, ctx.probe_log, ctx.u32_zero_value,
+                                             ctx.Const(3000U + k))};
+        Id slot{ctx.OpAtomicIAdd(ctx.U32[1], count_ptr, dev, ctx.u32_zero_value, ctx.Const(1U))};
+        slot = ctx.OpUMin(ctx.U32[1], slot, ctx.Const(63U));
+        const Id at{ctx.OpIAdd(ctx.U32[1], ctx.Const(3008U + k * 128U), ctx.OpShiftLeftLogical(ctx.U32[1], slot, ctx.Const(1U)))};
+        ctx.OpStore(ctx.OpAccessChain(ctx.storage_types.U32.element, ctx.probe_log, ctx.u32_zero_value, at), w);
+        Id who{ctx.u32_zero_value};
+        if (Sirit::ValidId(ctx.workgroup_id))
+            who = ctx.OpShiftLeftLogical(ctx.U32[1], ctx.OpCompositeExtract(ctx.U32[1], ctx.OpLoad(ctx.U32[3], ctx.workgroup_id), 0U),
+                                         ctx.Const(8U));
+        if (Sirit::ValidId(ctx.local_invocation_id))
+            who = ctx.OpBitwiseOr(ctx.U32[1], who,
+                                  ctx.OpCompositeExtract(ctx.U32[1], ctx.OpLoad(ctx.U32[3], ctx.local_invocation_id), 0U));
+        ctx.OpStore(ctx.OpAccessChain(ctx.storage_types.U32.element, ctx.probe_log, ctx.u32_zero_value,
+                                      ctx.OpIAdd(ctx.U32[1], at, ctx.Const(1U))), who);
+    }};
     for (const IR::AbstractSyntaxNode& node : program.syntax_list) {
         switch (node.type) {
         case IR::AbstractSyntaxNode::Type::Block: {
@@ -154,13 +220,15 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
             for (IR::Inst& inst : node.data.block->Instructions()) {
                 if (!probed && inst.GetOpcode() != IR::Opcode::Phi) {   // (after the phis: they must lead the block)
                     probed = true;
-                    const u32 at{128U + std::min<u32>(block_index(node.data.block), 4000U)};
+                    const u32 at{128U + std::min<u32>(block_index(node.data.block), 2871U)};
                     const Id counter{ctx.OpAccessChain(ctx.storage_types.U32.element, ctx.probe_log, ctx.u32_zero_value,
                                                        ctx.Const(at))};
                     ctx.OpAtomicIAdd(ctx.U32[1], counter, ctx.Const(static_cast<u32>(spv::Scope::Device)), ctx.u32_zero_value,
                                      ctx.Const(1U));
                 }
                 EmitInst(ctx, &inst);
+                if (!value_probe.empty() && inst.GetOpcode() != IR::Opcode::Phi)
+                    if (const auto it{value_probe.find(&inst)}; it != value_probe.end()) record_value(inst, it->second);
             }
             break;
         }

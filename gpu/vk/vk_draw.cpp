@@ -3379,7 +3379,17 @@ void stats_tick() {
                 fprintf(f, "\n%016llx s%d ssbo%d at %#llx AS THE GPU HELD IT after the %s (%llu of %u words non-zero, first at +%x):\n",
                         (unsigned long long)r.prog, r.stage, r.index, (unsigned long long)r.addr, r.stage == 5 ? "dispatch" : "draw",
                         (unsigned long long)nonzero, r.bytes / 4, first == UINT32_MAX ? 0 : first * 4);
-                const uint32_t from = first == UINT32_MAX ? 0 : first & ~3u;
+                uint32_t from = first == UINT32_MAX ? 0 : first & ~3u;
+                // (RX_VK_GPU_DUMP_AT=<hex byte offset>: the rows from there instead, and how many words past it are non-zero)
+                if (const char* at = getenv("RX_VK_GPU_DUMP_AT")) {
+                    const uint32_t o = (uint32_t)strtoul(at, nullptr, 16) / 4 & ~3u;
+                    if (o < r.bytes / 4) {
+                        uint32_t nz = 0;
+                        for (uint32_t i = o; i < r.bytes / 4; i++) nz += w[i] != 0;
+                        fprintf(f, "  (from +%x: %u words non-zero)\n", o * 4, nz);
+                        from = o;
+                    }
+                }
                 for (uint32_t i = from; i + 4 <= r.bytes / 4 && i < from + 64; i += 4)
                     fprintf(f, "  +%05x: %08x %08x %08x %08x\n", i * 4, w[i], w[i + 1], w[i + 2], w[i + 3]);
             }
@@ -3433,8 +3443,17 @@ void stats_tick() {
             for (const auto& [prog, slot] : miss_slot) {
                 const uint32_t* w = miss_map + (size_t)slot * (kMissSlice / 4);
                 fprintf(f, "\n# block probe %016llx (invocations entering IR Block $n, since the frame was armed)\n", (unsigned long long)prog);
-                for (uint32_t b = 0; 128 + b < kMissSlice / 4; b++)
+                for (uint32_t b = 0; 128 + b < 3000 && 128 + b < kMissSlice / 4; b++)
                     if (w[128 + b]) fprintf(f, "  $%u %u\n", b, w[128 + b]);
+                if (getenv("RX_VK_VALUE_PROBE") && 3008 + 8 * 128 <= kMissSlice / 4)   // (emit_spirv.cpp Traverse: value@workgroup.local)
+                    for (uint32_t k = 0; k < 8; k++) {
+                        if (!w[3000 + k]) continue;
+                        fprintf(f, "  value #%u (%u times):", k, w[3000 + k]);
+                        for (uint32_t i = 0; i < std::min<uint32_t>(w[3000 + k], 64); i++)
+                            fprintf(f, " %x@%x.%u", w[3008 + k * 128 + i * 2], w[3008 + k * 128 + i * 2 + 1] >> 8,
+                                    w[3008 + k * 128 + i * 2 + 1] & 255);
+                        fprintf(f, "\n");
+                    }
             }
         }
         if (const std::vector<uint64_t>& w = watch_addrs(); !w.empty() && stats_watch_map) {   // (RX_VK_WATCH_ADDRS)
@@ -3614,10 +3633,12 @@ void StatsQuery::gpu_dump(VkCommandBuffer cmd, const NvnState& s, uint64_t prog,
     VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     di.memoryBarrierCount = 1, di.pMemoryBarriers = &mb;
     vkCmdPipelineBarrier2(cmd, &di);
+    static const bool ubos = getenv("RX_VK_GPU_DUMP_UBO") != nullptr;   // (the uniform buffers too, as index 100 + slot)
     for (const int stage : {7, 6, 5})
-        for (int i = 0; i < 16; i++) {
+        for (int j = 0; j < (ubos ? 32 : 16); j++) {
+            const int i = j < 16 ? j : 100 + (j - 16);
             if ((stage == 5) != is_dispatch_dump) continue;   // (EvilOOT: a dispatch's own, stage 5)
-            const nvn_p_bind_buf& b = s.ssbo[stage][i];
+            const nvn_p_bind_buf& b = j < 16 ? s.ssbo[stage][j] : s.ubo[stage][j - 16];
             if (!b.addr || !b.size || stats_gpu_recs.size() >= kGpuDumpSlots) continue;
             const uint32_t bytes = (uint32_t)std::min<uint64_t>(b.size, kGpuDumpSlot) & ~3u;
             const BufferRef r = gpu_buffer_bind(b.addr, bytes, false);
