@@ -343,6 +343,9 @@ void software_multiplies(const char* why) {
 } // namespace
 
 void coopmat_init() {
+    // (amd-fix) NaN guard on float colour outputs for every card but NVIDIA (mma_layout.h frag_nan_guard)
+    Shader::Backend::SPIRV::frag_nan_guard = dev.props.vendorID != 0x10DE && !std::getenv("RX_VK_NO_NAN_GUARD");
+    if (Shader::Backend::SPIRV::frag_nan_guard) logf("vk: colour outputs NaN-guarded (not an NVIDIA card)");
     // (hookshot) RX_VK_MMA_SOFTWARE=1: HMMA_nx2 in a shader function on subgroup shuffles, no cooperative matrices
     // (emit_spirv_warp.cpp, from Lichii): the lowering still gives HMMA_nx2 (dev.native_mma)
     if (const char* sw = std::getenv("RX_VK_MMA_SOFTWARE"); sw && std::atoi(sw)) {

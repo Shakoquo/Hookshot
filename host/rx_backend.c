@@ -216,6 +216,10 @@ int rx_start(void *hwnd) {
     if (!b || !_stricmp(b, "vulkan") || eden) {   /* (hookshot: Vulkan unless told otherwise; a started game has no RX_BACKEND) */
         const char *dll = eden ? "mkw_eden.dll" : "hookshot_vk.dll";
         const MkwVkRenderer *r = load_vulkan(dll);
+        if (!r && !eden) {   /* (amd-fix) a graphics patch that does not start: the one it replaced (host/hos_update.c) */
+            r = load_vulkan("hookshot_vk.prev.dll");
+            if (r) hos_log("rx: hookshot_vk.dll did not start: the previous one (hookshot_vk.prev.dll) is used");
+        }
         if (r && r->start(hwnd)) {
             vk = r;
             hos_log("rx: renderer: %s (%s)", eden ? "Eden's" : "Vulkan", dll);
