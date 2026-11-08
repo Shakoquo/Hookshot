@@ -782,6 +782,13 @@ def main():
     if subprocess.call(shader_census_cmd(romfs, os.path.join(out, "hookshot_shaders.bin")), stdout=sys.stderr):
         print("the shader list was not made: the game will compile its shaders as it plays", flush=True)
     seed_pipelines(out)
+    # (sharkiix version: the launcher, tools/launcher/Hookshot Launcher.exe, beside the game; the builder's shortcuts open it)
+    launcher = os.path.join(ROOT, "launcher", "Hookshot Launcher.exe")
+    if os.path.isfile(launcher):
+        try:
+            shutil.copy2(launcher, os.path.join(out, "Hookshot Launcher.exe"))
+        except OSError as e:
+            print("the launcher was not copied (%s): start hookshot.exe directly" % e, flush=True)
     language = os.path.join(out, "language.txt")   # (the same text as host/nn_applet.c writes)
     with open(language, "w", encoding="utf-8", newline="\n") as f:
         f.write("# The game's language. Change the line below to one of the codes listed here, save, and start the game again.\n\n%s\n\n" % a.language)

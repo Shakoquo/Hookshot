@@ -80,6 +80,9 @@ static class Finder
     public static void Shortcuts(string gameFolder, bool desktop, bool start)
     {
         var exe = Path.Combine(gameFolder, "hookshot.exe");
+        // (sharkiix version: the launcher beside the game, when there is one: update check, settings, saves, then the game)
+        var launcher = Path.Combine(gameFolder, "Hookshot Launcher.exe");
+        if (File.Exists(launcher)) exe = launcher;
         foreach (var (link, want) in new[] { (DesktopLink, desktop), (StartLink, start) })
         {
             try
