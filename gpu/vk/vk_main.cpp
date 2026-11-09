@@ -291,6 +291,8 @@ bool create_device() {
         vkGetPhysicalDeviceProperties2(dev.physical, &p2);
         const bool pin = f13.subgroupSizeControl && sc.minSubgroupSize <= 32 && sc.maxSubgroupSize >= 32 && !getenv("RX_VK_NO_SUBGROUP_PIN");
         dev.sg32_stages = pin ? sc.requiredSubgroupSizeStages : 0;
+        // (RX_VK_SG32_MASK=<hex>, a test: only these of the stages are held to 32 lanes. 0x20 = what RX 6000 drivers allow)
+        if (const char* m = getenv("RX_VK_SG32_MASK")) dev.sg32_stages &= (VkShaderStageFlags)strtoul(m, nullptr, 16);
         dev.sg_max = std::max(sg.subgroupSize, f13.subgroupSizeControl ? sc.maxSubgroupSize : 0u);
         logf("vk: subgroups: default %u lanes, %u-%u, pinned to 32 on stages %#x", sg.subgroupSize, sc.minSubgroupSize, sc.maxSubgroupSize,
              (unsigned)dev.sg32_stages);

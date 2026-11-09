@@ -1377,6 +1377,7 @@ void translate_mesh_into(Program& p, const NvnState& s, const Code* task, const 
                     if (fs->program.info.loads.Generic(i) && !mesh_t->program.info.stores.Generic(i))
                         frt.point_coord_generics.set(i);
             for (int i = 0; i < 8; i++) frt.color_output_types[i] = static_cast<Shader::AttributeType>(color_types[i]);
+            dump_ir(p, "mesh_fragment", fs->program, fsc->key);
             const std::vector<uint32_t> fspirv = Shader::Backend::SPIRV::EmitSPIRV(profile_for(VK_SHADER_STAGE_FRAGMENT_BIT), frt, fs->program, bindings);
             kept.push_back(fspirv);
             Stage f;
