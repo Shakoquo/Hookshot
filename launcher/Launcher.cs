@@ -17,11 +17,11 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("Hookshot Launcher")]
 [assembly: System.Reflection.AssemblyProduct("Hookshot - AMD fix (sharkiix version)")]
-[assembly: System.Reflection.AssemblyVersion("2.0.0.0")]
+[assembly: System.Reflection.AssemblyVersion("2.1.0.0")]
 
 static class Fork {
     public const string Base = "amd-fix-2.0";      // (host/hos_update.c HOOKSHOT_FORK_BASE: the exe this launcher ships with)
-    public const string Version = "amd-fix-2.0";   // (HOOKSHOT_FORK_VERSION)
+    public const string Version = "amd-fix-2.1";   // (HOOKSHOT_FORK_VERSION)
     public const int Api = 4;                      // (gpu/vk/vk_api.h MKWVK_API_VERSION)
     public const string Api_Url = "https://api.github.com/repos/Shakoquo/Hookshot/releases/latest";
     public const string Page = "https://github.com/Shakoquo/Hookshot/releases/latest";

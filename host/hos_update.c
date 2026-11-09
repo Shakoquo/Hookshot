@@ -29,7 +29,7 @@
 #include "../gpu/vk/vk_api.h"   /* (MKWVK_API_VERSION) */
 
 #define HOOKSHOT_FORK_BASE "amd-fix-2.0"      /* (the exe: which graphics patches fit it) */
-#define HOOKSHOT_FORK_VERSION "amd-fix-2.0"   /* (the release this folder was built from) */
+#define HOOKSHOT_FORK_VERSION "amd-fix-2.1"   /* (the release this folder was built from) */
 #define UPDATE_HOST L"api.github.com"
 #define UPDATE_PATH L"/repos/Shakoquo/Hookshot/releases/latest"
 #define RELEASES_PAGE L"https://github.com/Shakoquo/Hookshot/releases/latest"
