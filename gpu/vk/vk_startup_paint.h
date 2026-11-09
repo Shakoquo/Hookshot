@@ -78,7 +78,7 @@ inline void spaced(HDC dc, const std::string& t, int x, int y, int gap, bool cen
 }
 } // namespace startup_gdi
 
-/// The logo (assets/hookshot.png, nx2/logo_rgba.py) into a 32-bit top-down DIB of width w: lh pixels tall, centred on cx, its
+/// The logo (assets/mako.png, nx2/logo_rgba.py) into a 32-bit top-down DIB of width w: lh pixels tall, centred on cx, its
 /// top at y, blended by its alpha over what is there; bilinear
 inline void blit_logo(uint32_t* bits, int w, int h, int cx, int y, int lh) {
 #ifdef HOOKSHOT_LOGO
@@ -122,7 +122,7 @@ inline void paint_startup_view(HDC dc, uint32_t w, uint32_t h, int pct, const St
     const auto S = [pct](double px) { return (int)std::lround(px * pct / 100.0); };
     const int top = S(kLogoH + 16);   // (the logo above the wordmark)
     const auto Y = [&](double px) { return top + S(px); };
-    const COLORREF ink = RGB(236, 240, 236), soft = RGB(176, 186, 180), dim = RGB(112, 122, 116), accent = RGB(104, 186, 124);
+    const COLORREF ink = RGB(234, 241, 255), soft = RGB(154, 170, 200), dim = RGB(94, 110, 142), accent = RGB(56, 200, 255);
     fill(dc, 0, 0, (int)w, (int)h, RGB(0, 0, 0));
     SetBkMode(dc, TRANSPARENT);
     const int cx = (int)w / 2;
@@ -133,7 +133,7 @@ inline void paint_startup_view(HDC dc, uint32_t w, uint32_t h, int pct, const St
     GdiFlush();
     blit_logo(bits, (int)w, (int)h, cx, 0, S(kLogoH));
     SetTextColor(dc, ink);
-    spaced(dc, "HOOKSHOT", cx, Y(0), S(7), true);
+    spaced(dc, "MAKO", cx, Y(0), S(9), true);
     SelectObject(dc, ver);
     SetTextColor(dc, dim);
     SetTextAlign(dc, TA_CENTER | TA_TOP);
@@ -173,11 +173,11 @@ inline void paint_startup_view(HDC dc, uint32_t w, uint32_t h, int pct, const St
         }
         const int bar_y = Y(170), bar_h = std::max(4, S(8));
         if (v.fraction >= 0) {
-            round_fill(dc, x0, bar_y, x1 - x0, bar_h, RGB(36, 42, 39));
+            round_fill(dc, x0, bar_y, x1 - x0, bar_h, RGB(26, 36, 58));
             const int fw = (int)std::lround(std::min(v.fraction, 1.0) * (x1 - x0));
             if (fw >= bar_h) {
                 round_fill(dc, x0, bar_y, fw, bar_h, accent);
-                fill(dc, x0 + bar_h / 2, bar_y + 1, fw - bar_h, std::max(1, bar_h / 4), RGB(140, 214, 158));   // (a soft highlight)
+                fill(dc, x0 + bar_h / 2, bar_y + 1, fw - bar_h, std::max(1, bar_h / 4), RGB(150, 225, 255));   // (a soft highlight)
             }
         }
         SelectObject(dc, body);

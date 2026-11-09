@@ -677,7 +677,7 @@ LRESULT CALLBACK proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CLOSE:   // (asked first: a close here is what the bar is there to prevent)
         if (MessageBoxA(h, "The shaders are still being prepared.\n\nIf you close the game now, the next start goes on from about "
                            "where this one stopped.\n\nClose the game anyway?",
-                        "Hookshot", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST) == IDYES)
+                        "Mako", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST) == IDYES)
             TerminateProcess(GetCurrentProcess(), 0);
         return 0;
     case WM_APP:
@@ -711,7 +711,7 @@ void run() {
     AdjustWindowRectEx(&r, style, FALSE, ex);
     const int ww = r.right - r.left, wh = r.bottom - r.top;
     const int x = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, y = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
-    HWND h = CreateWindowExA(ex, wc.lpszClassName, "Hookshot - preparing shaders", style, x, y, ww, wh, nullptr, nullptr, inst, nullptr);
+    HWND h = CreateWindowExA(ex, wc.lpszClassName, "Mako - preparing shaders", style, x, y, ww, wh, nullptr, nullptr, inst, nullptr);
     if (h) {
         wnd = h;
         sample();
@@ -933,7 +933,7 @@ bool started_up() {
                         CloseHandle(input);
                     }
 #endif
-                    SetConsoleTitleA("Hookshot");
+                    SetConsoleTitleA("Mako");
                     console = CreateFileA("CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
                     if (console == INVALID_HANDLE_VALUE) console = nullptr;
                 }
@@ -1093,10 +1093,10 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
 #ifdef _WIN32
         std::thread([name = std::string(dev.props.deviceName)] {
             const std::string text = "Your graphics card (" + name + ") or its driver has no mesh shader support, which Ocarina of Time "
-                "uses for foliage, grass and many effects, so parts of the picture will be missing or broken.\n\nHookshot needs a GPU "
+                "uses for foliage, grass and many effects, so parts of the picture will be missing or broken.\n\nMako needs a GPU "
                 "with mesh shaders: NVIDIA GeForce RTX 20 series or newer, AMD Radeon RX 6000 series or newer, or Intel Arc. If your "
                 "card is one of those, update its driver.";
-            MessageBoxA(nullptr, text.c_str(), "Hookshot: graphics card", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+            MessageBoxA(nullptr, text.c_str(), "Mako: graphics card", MB_OK | MB_ICONWARNING | MB_TOPMOST);
         }).detach();
 #endif
     }

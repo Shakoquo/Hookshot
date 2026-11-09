@@ -333,7 +333,7 @@ static const char *saves_dir(const char *beside) {
         snprintf(note, sizeof note, "%.*s" SEP_S "saves-moved.txt", sep ? (int)(sep - beside) : 0, beside);
         FILE *f = fopen(note, "w");
         if (f) {
-            fprintf(f, "Hookshot's saves are now in\n%s\n\nThey moved there from the user folder that was here.\n", dir);
+            fprintf(f, "Mako's saves are now in\n%s\n\nThey moved there from the user folder that was here.\n", dir);
             fclose(f);
         }
         hos_log("saves: moved from %s to %s", beside, dir);
@@ -419,7 +419,7 @@ static void save_folder_import(const char *game_dir, const char *user_dir) {
         FILE *f = fopen(note, "w");
         if (f) {
             fprintf(f,
-                "=== SAVE FOLDER (Hookshot - AMD fix, sharkiix version) ===\n\n"
+                "=== SAVE FOLDER (Mako) ===\n\n"
                 "FRANCAIS\n"
                 "Pour jouer avec ta sauvegarde, glisse-la dans ce dossier puis lance le jeu.\n"
                 "Ca marche avec une sauvegarde d'Eden, Lichii, Ryujinx, d'une Switch ou d'un autre Hookshot :\n"
