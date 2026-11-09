@@ -176,9 +176,11 @@ def main():
         if not a.no_polls:
             poll.install()
         gen = os.path.join(out_dir, "gen")
-        files = chunks.write(L, gen, os.path.join(a.work, "image"), a.rechunk and not a.standalone)
+        files = chunks.write(L, gen, os.path.join(a.work, "image"), a.rechunk and not a.standalone,
+                             counters=[] if a.no_polls else [poll.stats])
         import oot_patches
-        oot_patches.apply(gen)
+        main_build = next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), "")
+        oot_patches.apply(gen, protect_hearts=a.standalone and main_build == oot_patches.LIFE_BUILD_ID)
         a64_rtgen.write(gen)
         if a.standalone:
             start, exit_ = standalone.write_image_c(gen, img, meta, a.exefs)
