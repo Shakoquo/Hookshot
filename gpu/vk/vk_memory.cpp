@@ -350,7 +350,17 @@ bool import_pool(uint64_t lo, uint64_t hi, Pool& p) {
     } report{t0, t1, t2, t3, t4};
     // (pages the game has not touched yet may be only reserved: committed now, as the pool's memory is usable; a range
     // committed already is left alone: the call took milliseconds in the game's huge reservation)
-    {
+    // (Windows sizes a region by walking the page table until an attribute changes: in the game's heap, gigabytes
+    // committed alike, one VirtualQuery here and the driver's own in vkAllocateMemory took 25-60 ms each, a hitch
+    // per import in Castle Town. The range is made a region of its own first: executable too, its last page not, so
+    // that neighbours never merge with it; the queries then stop at its ends. RX_VK_IMPORT_SPLIT=0: off)
+    static const bool split = [] { const char* e = getenv("RX_VK_IMPORT_SPLIT"); return !(e && e[0] == '0'); }();
+    auto make_own_region = [&] {
+        DWORD old;
+        return bytes > 8192 && VirtualProtect(ptr, (size_t)(bytes - 4096), PAGE_EXECUTE_READWRITE, &old) &&
+               VirtualProtect(ptr + bytes - 4096, 4096, PAGE_READWRITE, &old);
+    };
+    if (!split || !make_own_region()) {   // (fails while part of the range is only reserved)
         for (uint8_t* q = ptr; q < ptr + bytes;) {
             MEMORY_BASIC_INFORMATION mi{};
             if (VirtualQuery(q, &mi, sizeof mi) != sizeof mi) break;
@@ -358,6 +368,7 @@ bool import_pool(uint64_t lo, uint64_t hi, Pool& p) {
             if (mi.State == MEM_RESERVE) VirtualAlloc(q, (size_t)(end - q), MEM_COMMIT, PAGE_READWRITE);
             q = end;
         }
+        if (split) make_own_region();
     }
 #ifdef __linux__
     if (import_dma_buf(lo, hi, p)) {
