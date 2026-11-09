@@ -647,6 +647,24 @@ const Shader::Profile& profile() {
     static const Shader::Profile p = make_profile();
     return p;
 }
+/// (hookshot) The profile for a stage: a stage the driver cannot hold to 32 lanes (RX 6000: compute only, "pinned to 32 on
+/// stages 0x20") runs 64 wide, and NVN's 32-lane ballots, votes and shuffles came out wrong there (white-glowing objects,
+/// grass and the horse on RX 6600/6700 XT). Eden's path for a warp larger than the guest's keeps them to each 32-lane half.
+/// Stages held to 32 (every stage on RX 7000/9000, NVIDIA's 32-lane GPUs) get the same SPIR-V as before.
+/// RX_VK_NO_WIDE_WARP=1: the 32-lane profile everywhere, as before.
+const Shader::Profile& profile_for(VkShaderStageFlags stage) {
+    static const bool off = getenv("RX_VK_NO_WIDE_WARP") != nullptr;
+    if (off || (dev.sg32_stages & stage) || dev.sg_max <= 32) return profile();
+    static const Shader::Profile wide = [] {
+        Shader::Profile p = profile();
+        p.warp_size_potentially_larger_than_guest = true;
+        p.max_subgroup_size = std::min<uint32_t>(dev.sg_max, 128);
+        logf("vk: stages not held to 32 lanes (%#x) translated for warps up to %u lanes", (unsigned)(~dev.sg32_stages & 0xff),
+             p.max_subgroup_size);
+        return p;
+    }();
+    return wide;
+}
 
 const std::vector<Code>& codes_of(const NvnState& s) {
     auto& v = codes[s.prog.serial];
@@ -1174,7 +1192,7 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
             vrt.convert_depth_mode = host->depth_minus_w() != 0;
             Stage v;
             v.nvn_stage = 0;
-            const std::vector<uint32_t> vspirv = Shader::Backend::SPIRV::EmitSPIRV(profile(), vrt, vs->program, bindings);
+            const std::vector<uint32_t> vspirv = Shader::Backend::SPIRV::EmitSPIRV(profile_for(VK_SHADER_STAGE_VERTEX_BIT), vrt, vs->program, bindings);
             dump_ir(p, "vertex", vs->program);
             {   // (the programs that read the draw's parameters from the driver bank, each once)
                 const auto& ld = vs->program.info.loads;
@@ -1206,7 +1224,7 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
                         if (frt.color_output_types[i] == Shader::AttributeType::Float) float_targets |= 1u << i;
                     Shader::Optimization::GuardFragmentOutputs(fs->program, float_targets);
                 }
-                const std::vector<uint32_t> fspirv = Shader::Backend::SPIRV::EmitSPIRV(profile(), frt, fs->program, bindings);
+                const std::vector<uint32_t> fspirv = Shader::Backend::SPIRV::EmitSPIRV(profile_for(VK_SHADER_STAGE_FRAGMENT_BIT), frt, fs->program, bindings);
                 dump_ir(p, "fragment", fs->program);
                 Stage f;
                 f.nvn_stage = 1;
@@ -1298,7 +1316,7 @@ void translate_mesh_into(Program& p, const NvnState& s, const Code* task, const 
             dump_ir(p, "task", task_t->program, task->key);
             Shader::RuntimeInfo rt{};
             rt.previous_stage_stores.mask.set();
-            const std::vector<uint32_t> spirv = Shader::Backend::SPIRV::EmitSPIRV(profile(), rt, task_t->program, bindings);
+            const std::vector<uint32_t> spirv = Shader::Backend::SPIRV::EmitSPIRV(profile_for(VK_SHADER_STAGE_TASK_BIT_EXT), rt, task_t->program, bindings);
             kept.push_back(spirv);
             Stage st;
             st.nvn_stage = bank_stage(*task);
@@ -1330,7 +1348,7 @@ void translate_mesh_into(Program& p, const NvnState& s, const Code* task, const 
         if (task_t) mrt.previous_stage_stores = task_t->program.info.stores;
         else mrt.previous_stage_stores.mask.set();
         mrt.convert_depth_mode = host->depth_minus_w() != 0;
-        const std::vector<uint32_t> mspirv = Shader::Backend::SPIRV::EmitSPIRV(profile(), mrt, mesh_t->program, bindings);
+        const std::vector<uint32_t> mspirv = Shader::Backend::SPIRV::EmitSPIRV(profile_for(VK_SHADER_STAGE_MESH_BIT_EXT), mrt, mesh_t->program, bindings);
         kept.push_back(mspirv);
         Stage ms;
         ms.nvn_stage = bank_stage(mesh);
@@ -1359,7 +1377,7 @@ void translate_mesh_into(Program& p, const NvnState& s, const Code* task, const 
                     if (fs->program.info.loads.Generic(i) && !mesh_t->program.info.stores.Generic(i))
                         frt.point_coord_generics.set(i);
             for (int i = 0; i < 8; i++) frt.color_output_types[i] = static_cast<Shader::AttributeType>(color_types[i]);
-            const std::vector<uint32_t> fspirv = Shader::Backend::SPIRV::EmitSPIRV(profile(), frt, fs->program, bindings);
+            const std::vector<uint32_t> fspirv = Shader::Backend::SPIRV::EmitSPIRV(profile_for(VK_SHADER_STAGE_FRAGMENT_BIT), frt, fs->program, bindings);
             kept.push_back(fspirv);
             Stage f;
             f.nvn_stage = 1;
