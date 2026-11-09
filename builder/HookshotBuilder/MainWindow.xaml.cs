@@ -47,7 +47,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        OutPath.Text = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Games", "Hookshot");
+        OutPath.Text = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Games", "Mako");
         LanguageBox.ItemsSource = Strings.All;
         LanguageBox.SelectedItem = lang;
         WorkerBox.ItemsSource = BuildWorkers.Choices(Environment.ProcessorCount);
@@ -65,8 +65,8 @@ public partial class MainWindow : Window
         Loaded += (_, _) => Start();
         var tools = Tools.Find();
         ToolsNote.Text = tools != null
-            ? "Nothing else to install: Hookshot's own build tools are here, downloaded and checked by its setup."
-            : "Hookshot's build tools are missing from its folder. Press Build and Hookshot offers to download them again.";
+            ? "Nothing else to install: Mako's own build tools are here, downloaded and checked by its setup."
+            : "Mako's build tools are missing from its folder. Press Build and Mako offers to download them again.";
         SetStep(0);
         Refresh();
     }
@@ -96,7 +96,7 @@ public partial class MainWindow : Window
         }
         if (LaunchArg() is { } launchFolder)   // (Hookshot Launcher.exe in the game folder)
         {
-            SplashText.Text = "Starting Hookshot…";
+            SplashText.Text = "Starting Mako…";
             await Task.Delay(700);
             ShowMain();
             ShowLauncher(launchFolder);
@@ -154,7 +154,7 @@ public partial class MainWindow : Window
         {
             case Mode.UpdateGame:
                 FilesTitle.Text = "Update available";
-                FilesSub.Text = $"Hookshot {updateTarget} is available. Your game is {game}: Update builds it again from the game files kept in " +
+                FilesSub.Text = $"Mako {updateTarget} is available. Your game is {game}: Update builds it again from the game files kept in " +
                                 "its folder, compiling only what changed.";
                 BuildButton.Content = "Update";
                 break;
@@ -167,12 +167,12 @@ public partial class MainWindow : Window
                 break;
             case Mode.UpdateBuilder:
                 FilesTitle.Text = "Build your game";
-                FilesSub.Text = $"Hookshot Builder {latestTag} is available (this one is {builder}): update it first, then build.";
+                FilesSub.Text = $"Mako Builder {latestTag} is available (this one is {builder}): update it first, then build.";
                 BuildButton.Content = "Update builder";
                 break;
             default:
                 FilesTitle.Text = "Build your game";
-                FilesSub.Text = "Pick your game files and where the game goes. Hookshot does the rest, once.";
+                FilesSub.Text = "Pick your game files and where the game goes. Mako does the rest, once.";
                 BuildButton.Content = "Build the game";
                 break;
         }
@@ -196,7 +196,7 @@ public partial class MainWindow : Window
         OutPath.Text = folder;
         StepPill.Visibility = Visibility.Collapsed;
         var game = GameVersion(folder) ?? ReadVersion(folder);
-        LaunchVersion.Text = (game != null ? $"Hookshot {game}" : "Hookshot") + " · " + folder;
+        LaunchVersion.Text = (game != null ? $"Mako {game}" : "Mako") + " · " + folder;
         LaunchPlay.IsEnabled = File.Exists(GameExe(folder));
         ShowPage(LaunchPage);
         latestTag = Environment.GetEnvironmentVariable("HOOKSHOT_LATEST_TAG") is { Length: > 0 } fake ? (fake == "none" ? null : fake) : await Updater.LatestTag();
@@ -210,7 +210,7 @@ public partial class MainWindow : Window
             LaunchUpdate.Visibility = Visibility.Visible;
         }
         else if (game != null && game != updateTarget)
-            LaunchStatus.Text = $"{updateTarget} is out: build this folder again with the Hookshot Builder to get it";
+            LaunchStatus.Text = $"{updateTarget} is out: build this folder again with the Mako Builder to get it";
         else LaunchStatus.Text = latestTag == null ? "Up to date with this builder (GitHub did not answer)" : "Up to date";
     }
 
@@ -579,7 +579,7 @@ public partial class MainWindow : Window
     {
         if (!File.Exists(System.IO.Path.Combine(x, "main")))
         {
-            MessageBox.Show(this, "That exefs folder has no file named main.", "Hookshot");
+            MessageBox.Show(this, "That exefs folder has no file named main.", "Mako");
             return;
         }
         sourcePicked = true;
@@ -601,7 +601,7 @@ public partial class MainWindow : Window
 
     void BrowseWork(object sender, RoutedEventArgs e)
     {
-        if (PickFolder("Choose where Hookshot keeps its build files") is not { } picked) return;
+        if (PickFolder("Choose where Mako keeps its build files") is not { } picked) return;
         ChangeWork(picked);
     }
 
@@ -612,7 +612,7 @@ public partial class MainWindow : Window
         try { Storage.MoveWork(picked); }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException)
         {
-            MessageBox.Show(this, $"Hookshot cannot keep its build files there: {x.Message}", "Hookshot");
+            MessageBox.Show(this, $"Mako cannot keep its build files there: {x.Message}", "Mako");
         }
         Refresh();
     }
@@ -672,7 +672,7 @@ public partial class MainWindow : Window
                 try { await Updater.RunLatestSetup(this, Array.Empty<string>()); }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this, ex.Message + " You can also download HookshotBuilder.exe from the releases page.", "Hookshot");
+                    MessageBox.Show(this, ex.Message + " You can also download HookshotBuilder.exe from the releases page.", "Mako");
                     RefreshMode();
                 }
                 return;
@@ -681,7 +681,7 @@ public partial class MainWindow : Window
         var tools = Tools.Find();
         if (tools == null)
         {
-            ShowProblem("The build tools are not in Hookshot's folder.", tools: true);
+            ShowProblem("The build tools are not in Mako's folder.", tools: true);
             return;
         }
         var args = new List<string>();
@@ -725,7 +725,7 @@ public partial class MainWindow : Window
         try { workers = BuildWorkers.Selected(WorkerBox.SelectedItem); }
         catch (ArgumentException e)
         {
-            MessageBox.Show(this, e.Message, "Hookshot");
+            MessageBox.Show(this, e.Message, "Mako");
             return;
         }
         if (!keepRows)
@@ -956,9 +956,9 @@ public partial class MainWindow : Window
         var (total, freeable) = await Task.Run(Storage.Measure);
         if (total < 100L << 20) return;
         StorageNote.Text = freeable >= 100L << 20
-            ? $"Hookshot Builder keeps {Storage.Gb(total)} on this PC ({Storage.Base}). {Storage.Gb(freeable)} of it only makes the next " +
+            ? $"Mako Builder keeps {Storage.Gb(total)} on this PC ({Storage.Base}). {Storage.Gb(freeable)} of it only makes the next " +
               "update quicker and can be freed: your game keeps playing, and the next update then takes about as long as this build."
-            : $"Hookshot Builder keeps {Storage.Gb(total)} on this PC ({Storage.Base}): the builder itself.";
+            : $"Mako Builder keeps {Storage.Gb(total)} on this PC ({Storage.Base}): the builder itself.";
         FreeButton.Visibility = freeable >= 100L << 20 ? Visibility.Visible : Visibility.Collapsed;
         FreeButton.IsEnabled = true;
         FreeButton.Content = "Free up space";
@@ -1070,7 +1070,7 @@ public partial class MainWindow : Window
     void CopyForReport(object sender, RoutedEventArgs e)
     {
         var lines = log.ToString().Split('\n');
-        var text = $"Hookshot Builder {Tools.Find()?.Version ?? "(source)"} on Windows {Environment.OSVersion.Version}\n" +
+        var text = $"Mako Builder {Tools.Find()?.Version ?? "(source)"} on Windows {Environment.OSVersion.Version}\n" +
                    $"{ProblemTitle.Text}: {lastFailure}\n\n" + string.Join("\n", lines.Skip(Math.Max(0, lines.Length - 200)));
         try { Clipboard.SetText(text); CopyReport.Content = "Copied"; } catch (Exception) { }
     }
@@ -1155,7 +1155,7 @@ public partial class MainWindow : Window
 
     void CloseWindow(object sender, RoutedEventArgs e)
     {
-        if (runner != null && MessageBox.Show(this, T(S.CloseQuestion), "Hookshot", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        if (runner != null && MessageBox.Show(this, T(S.CloseQuestion), "Mako", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         runner?.Cancel();
         Close();
     }

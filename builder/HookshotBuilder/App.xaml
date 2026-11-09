@@ -4,35 +4,35 @@
              StartupUri="MainWindow.xaml">
   <Application.Resources>
 
-    <!-- Slate, frosted (the approved installer design: Desktop\loader\index.html, "Installer") -->
-    <SolidColorBrush x:Key="Page" Color="#14161A"/>
-    <SolidColorBrush x:Key="Raised" Color="#1C1F24"/>
-    <SolidColorBrush x:Key="RaisedHover" Color="#23272D"/>
-    <SolidColorBrush x:Key="Line" Color="#2C3037"/>
-    <SolidColorBrush x:Key="LineStrong" Color="#3D434C"/>
-    <SolidColorBrush x:Key="Ink" Color="#EDEFF2"/>
-    <SolidColorBrush x:Key="InkSoft" Color="#A2A9B3"/>
-    <SolidColorBrush x:Key="InkFaint" Color="#6E7681"/>
-    <SolidColorBrush x:Key="Brand" Color="#3D63E6"/>
-    <SolidColorBrush x:Key="BrandHover" Color="#4B70F0"/>
-    <SolidColorBrush x:Key="BrandInk" Color="#DFE6FF"/>
-    <SolidColorBrush x:Key="Go" Color="#5FB08A"/>
-    <SolidColorBrush x:Key="GoHover" Color="#70C09A"/>
-    <SolidColorBrush x:Key="GoInk" Color="#06150E"/>
-    <SolidColorBrush x:Key="Warn" Color="#E2B86B"/>
-    <SolidColorBrush x:Key="Bad" Color="#E2776B"/>
+    <!-- Mako: deep navy and electric blue, from the shark logo (the launcher's palette, launcher/Launcher.cs Theme) -->
+    <SolidColorBrush x:Key="Page" Color="#0A1222"/>
+    <SolidColorBrush x:Key="Raised" Color="#0E1626"/>
+    <SolidColorBrush x:Key="RaisedHover" Color="#142036"/>
+    <SolidColorBrush x:Key="Line" Color="#20304E"/>
+    <SolidColorBrush x:Key="LineStrong" Color="#2C4470"/>
+    <SolidColorBrush x:Key="Ink" Color="#EAF1FF"/>
+    <SolidColorBrush x:Key="InkSoft" Color="#9AAAC8"/>
+    <SolidColorBrush x:Key="InkFaint" Color="#5E6E8E"/>
+    <SolidColorBrush x:Key="Brand" Color="#2E7BFF"/>
+    <SolidColorBrush x:Key="BrandHover" Color="#4A90FF"/>
+    <SolidColorBrush x:Key="BrandInk" Color="#CFE2FF"/>
+    <SolidColorBrush x:Key="Go" Color="#2E7BFF"/>
+    <SolidColorBrush x:Key="GoHover" Color="#4A90FF"/>
+    <SolidColorBrush x:Key="GoInk" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Warn" Color="#FFB547"/>
+    <SolidColorBrush x:Key="Bad" Color="#FF5A6A"/>
     <!-- (kept for the old names the code still uses) -->
-    <SolidColorBrush x:Key="Accent" Color="#5FB08A"/>
+    <SolidColorBrush x:Key="Accent" Color="#38C8FF"/>
 
     <!-- glass: white at low alpha over the acrylic backdrop -->
     <SolidColorBrush x:Key="Glass" Color="#0DFFFFFF"/>
     <SolidColorBrush x:Key="GlassHover" Color="#17FFFFFF"/>
     <SolidColorBrush x:Key="GlassLine" Color="#17FFFFFF"/>
     <SolidColorBrush x:Key="GlassLineStrong" Color="#2AFFFFFF"/>
-    <SolidColorBrush x:Key="GoSoft" Color="#265FB08A"/>
-    <SolidColorBrush x:Key="BadSoft" Color="#26E2776B"/>
-    <SolidColorBrush x:Key="WarnSoft" Color="#1FE2B86B"/>
-    <SolidColorBrush x:Key="BrandSoft" Color="#333D63E6"/>
+    <SolidColorBrush x:Key="GoSoft" Color="#262E7BFF"/>
+    <SolidColorBrush x:Key="BadSoft" Color="#26FF5A6A"/>
+    <SolidColorBrush x:Key="WarnSoft" Color="#1FFFB547"/>
+    <SolidColorBrush x:Key="BrandSoft" Color="#332E7BFF"/>
 
     <FontFamily x:Key="Ui">pack://application:,,,/Fonts/#Inter</FontFamily>
     <FontFamily x:Key="Display">pack://application:,,,/Fonts/#Inter</FontFamily>
@@ -138,7 +138,7 @@
             <Border x:Name="Box" Background="{StaticResource Brand}" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="8"
                     Padding="{TemplateBinding Padding}">
               <Border.Effect>
-                <DropShadowEffect x:Name="Glow" Color="#3D63E6" BlurRadius="22" ShadowDepth="6" Direction="270" Opacity="0.55"/>
+                <DropShadowEffect x:Name="Glow" Color="#2E7BFF" BlurRadius="22" ShadowDepth="6" Direction="270" Opacity="0.55"/>
               </Border.Effect>
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
@@ -170,10 +170,16 @@
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="Box" Background="{StaticResource Go}" BorderBrush="#40FFFFFF" BorderThickness="1" CornerRadius="10"
+            <Border x:Name="Box" BorderBrush="#50FFFFFF" BorderThickness="1" CornerRadius="12"
                     Padding="{TemplateBinding Padding}">
+              <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                  <GradientStop Color="#2F7DFF" Offset="0"/>
+                  <GradientStop Color="#1A4FD0" Offset="1"/>
+                </LinearGradientBrush>
+              </Border.Background>
               <Border.Effect>
-                <DropShadowEffect Color="#5FB08A" BlurRadius="30" ShadowDepth="8" Direction="270" Opacity="0.5"/>
+                <DropShadowEffect Color="#2E7BFF" BlurRadius="34" ShadowDepth="6" Direction="270" Opacity="0.65"/>
               </Border.Effect>
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
@@ -412,10 +418,38 @@
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="ProgressBar">
+            <!-- (blue to cyan, a light running along it) -->
             <Grid>
               <Border x:Name="PART_Track" Background="{TemplateBinding Background}" CornerRadius="3"/>
-              <Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}" CornerRadius="3" HorizontalAlignment="Left"/>
+              <Border x:Name="PART_Indicator" CornerRadius="3" HorizontalAlignment="Left" ClipToBounds="True">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                    <GradientStop Color="#2E7BFF" Offset="0"/>
+                    <GradientStop Color="#38C8FF" Offset="1"/>
+                  </LinearGradientBrush>
+                </Border.Background>
+                <Rectangle Width="70" HorizontalAlignment="Left">
+                  <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                      <GradientStop Color="#00FFFFFF" Offset="0"/>
+                      <GradientStop Color="#90FFFFFF" Offset="0.5"/>
+                      <GradientStop Color="#00FFFFFF" Offset="1"/>
+                    </LinearGradientBrush>
+                  </Rectangle.Fill>
+                  <Rectangle.RenderTransform><TranslateTransform X="-80"/></Rectangle.RenderTransform>
+                  <Rectangle.Triggers>
+                    <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                      <BeginStoryboard>
+                        <Storyboard RepeatBehavior="Forever">
+                          <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" From="-80" To="900" Duration="0:0:2.2"/>
+                        </Storyboard>
+                      </BeginStoryboard>
+                    </EventTrigger>
+                  </Rectangle.Triggers>
+                </Rectangle>
+              </Border>
             </Grid>
+
           </ControlTemplate>
         </Setter.Value>
       </Setter>

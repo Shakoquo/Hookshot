@@ -1116,11 +1116,15 @@ def main(a=None):
     if LINUX and os.path.exists(icon):   # (the window's icon: host/posix/display_sdl.c)
         shutil.copy2(icon, os.path.join(out, "hookshot.png"))
     seed_pipelines(out)
-    # (sharkiix version: the launcher, tools/launcher/Hookshot Launcher.exe, beside the game; the builder's shortcuts open it)
-    launcher = os.path.join(ROOT, "launcher", "Hookshot Launcher.exe")
+    # (Mako: the launcher, tools/launcher/Mako Launcher.exe, beside the game; the builder's shortcuts open it. The Hookshot-named
+    # launcher of the amd-fix 2.x folders goes: an update from one of them leaves only Mako's)
+    launcher = os.path.join(ROOT, "launcher", "Mako Launcher.exe")
     if os.path.isfile(launcher):
         try:
-            shutil.copy2(launcher, os.path.join(out, "Hookshot Launcher.exe"))
+            shutil.copy2(launcher, os.path.join(out, "Mako Launcher.exe"))
+            old_launcher = os.path.join(out, "Hookshot Launcher.exe")
+            if os.path.isfile(old_launcher):
+                os.remove(old_launcher)
         except OSError as e:
             print("the launcher was not copied (%s): start hookshot.exe directly" % e, flush=True)
     ship_state_list(out)

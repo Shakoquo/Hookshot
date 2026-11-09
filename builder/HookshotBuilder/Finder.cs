@@ -73,12 +73,37 @@ static class Finder
 
     // ---- shortcuts to the built game ----
 
-    public static string DesktopLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Hookshot.lnk");
-    public static string StartLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Hookshot.lnk");
+    public static string DesktopLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Mako.lnk");
+    public static string StartLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Mako.lnk");
+    // (the amd-fix 2.x shortcuts, named Hookshot: replaced by Mako's when they open this folder)
+    static string OldDesktopLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Hookshot.lnk");
+    static string OldStartLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Hookshot.lnk");
 
     /// Made or removed as the two ticks say (Windows' own shell object writes the .lnk)
     /// The shortcuts the player has, made again (onto the folder's launcher now that it has one); none made where there was none
-    public static void RefreshShortcuts(string gameFolder) => Shortcuts(gameFolder, File.Exists(DesktopLink), File.Exists(StartLink));
+    public static void RefreshShortcuts(string gameFolder)
+    {
+        bool oldDesk = PointsInto(OldDesktopLink, gameFolder), oldStart = PointsInto(OldStartLink, gameFolder);
+        Shortcuts(gameFolder, File.Exists(DesktopLink) || oldDesk, File.Exists(StartLink) || oldStart);
+        foreach (var (old, was) in new[] { (OldDesktopLink, oldDesk), (OldStartLink, oldStart) })
+            if (was) try { File.Delete(old); } catch (Exception) { }
+    }
+
+    /// Whether a shortcut opens something in this game folder (its target read through the shell's own object)
+    static bool PointsInto(string link, string gameFolder)
+    {
+        if (!File.Exists(link)) return false;
+        try
+        {
+            var sl = (IShellLinkW)new ShellLink();
+            ((System.Runtime.InteropServices.ComTypes.IPersistFile)sl).Load(link, 0);
+            var sb = new System.Text.StringBuilder(1024);
+            sl.GetPath(sb, sb.Capacity, IntPtr.Zero, 0);
+            var dir = Path.GetFullPath(gameFolder).TrimEnd('\\') + "\\";
+            return Path.GetFullPath(sb.ToString()).StartsWith(dir, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception) { return false; }
+    }
 
     public static void Shortcuts(string gameFolder, bool desktop, bool start)
     {
@@ -87,8 +112,9 @@ static class Finder
         var exe = Path.Combine(gameFolder, "hookshot.exe");
         var icon = File.Exists(Path.Combine(gameFolder, "bin", "hookshot.exe")) ? Path.Combine(gameFolder, "bin", "hookshot.exe") : exe;
         // (sharkiix version: the launcher beside the game, when there is one: update check, settings, saves, then the game)
-        var launcher = Path.Combine(gameFolder, "Hookshot Launcher.exe");
-        if (File.Exists(launcher)) exe = launcher;
+        var launcher = Path.Combine(gameFolder, "Mako Launcher.exe");
+        if (!File.Exists(launcher)) launcher = Path.Combine(gameFolder, "Hookshot Launcher.exe");
+        if (File.Exists(launcher)) { exe = launcher; icon = launcher; }   // (Mako's shark)
         foreach (var (link, want) in new[] { (DesktopLink, desktop), (StartLink, start) })
         {
             try
@@ -105,7 +131,7 @@ static class Finder
                 sl.SetPath(exe);
                 sl.SetWorkingDirectory(gameFolder);
                 sl.SetIconLocation(icon, 0);
-                sl.SetDescription("The Legend of Zelda: Ocarina of Time, built by Hookshot");
+                sl.SetDescription("Mako: The Legend of Zelda: Ocarina of Time on PC");
                 Directory.CreateDirectory(Path.GetDirectoryName(link)!);
                 ((System.Runtime.InteropServices.ComTypes.IPersistFile)sl).Save(link, true);
             }
