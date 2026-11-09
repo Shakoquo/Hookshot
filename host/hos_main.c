@@ -557,7 +557,7 @@ int hos_oot_is_player(Ctx *c, uint64_t actor) {
            recomp_load8(c, resource + 94) == 0;
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)   /* (the debug tools: host/posix has what they call) */
 /* OneShotAddOrRemovePouchContent (f_828d4a70) for one pouch content by actor name: delta > 0 adds, < 0 removes.
    Returns the event status (top bits of the result word), or -1 when the pouch is not ready. */
 static int oot_pouch_change(Ctx *c, const char *name, int delta) {
@@ -1167,7 +1167,7 @@ static void oot_update_player_cheats(Ctx *c, uint64_t actor, uint64_t components
 #endif
 
 int hos_oot_flight_shortcut_ready(void) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)   /* (the debug tools: host/posix has what they call) */
     const int64_t seen = __atomic_load_n(&flight_player_seen, __ATOMIC_RELAXED);
     return seen && hos_now_ns() - seen < 250000000;
 #else
@@ -1175,7 +1175,7 @@ int hos_oot_flight_shortcut_ready(void) {
 #endif
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)   /* (the debug tools: host/posix has what they call) */
 static void oot_write_flight_rotation(Ctx *c, uint64_t matrix) {
     const float s = sinf(flight_transform_yaw), co = cosf(flight_transform_yaw);
     const float rotation[3][3] = {{co, 0, s}, {0, 1, 0}, {-s, 0, co}};
@@ -1190,7 +1190,7 @@ static void oot_write_flight_rotation(Ctx *c, uint64_t matrix) {
 #endif
 
 void hos_oot_flight_rotation(Ctx *c, uint64_t controller, uint64_t matrix) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)   /* (the debug tools: host/posix has what they call) */
     if (flight_transform_controller == controller) oot_write_flight_rotation(c, matrix);
 #else
     (void)c;
@@ -1200,7 +1200,7 @@ void hos_oot_flight_rotation(Ctx *c, uint64_t controller, uint64_t matrix) {
 }
 
 void hos_oot_flight_pose(Ctx *c, uint64_t actor, uint64_t matrix) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)   /* (the debug tools: host/posix has what they call) */
     if (flight_pose_actor == actor) {
         flight_pose_actor = 0;
         oot_write_flight_rotation(c, matrix);
@@ -1213,7 +1213,7 @@ void hos_oot_flight_pose(Ctx *c, uint64_t actor, uint64_t matrix) {
 }
 
 void hos_oot_lift_player(Ctx *c, uint64_t actor) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)   /* (the debug tools: host/posix has what they call) */
     flight_pose_actor = 0;
     if (recomp_load64(c, actor) != 0x84b45e18ULL) return;
     const uint64_t components = recomp_load64(c, actor + 624);
@@ -1232,7 +1232,7 @@ void hos_oot_lift_player(Ctx *c, uint64_t actor) {
 #endif
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)   /* (the debug tools: host/posix has what they call) */
 static void oot_build_free_view(Ctx *c, uint64_t view, uint64_t out) {
     int rx_option(int id, int otherwise);
     static uint64_t active_view;
@@ -1293,7 +1293,7 @@ static void oot_build_free_view(Ctx *c, uint64_t view, uint64_t out) {
 #endif
 
 void hos_oot_free_view(Ctx *c, uint64_t view) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)   /* (the debug tools: host/posix has what they call) */
     int rx_option(int id, int otherwise);
     if (!view || recomp_load64(c, view) != 0x84c18a88ULL) return;
 
@@ -1332,17 +1332,49 @@ static void occlusion_switch(void) {
 __declspec(dllexport) unsigned long NvOptimusEnablement = 1;
 __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 
+/* (hookshot) The game's paths are UTF-8 char strings through Windows' A functions and fopen: its manifest (nx2/win_manifest.py)
+   makes the process's code page UTF-8, from Windows 10 1903 on. Before that, or with the manifest missing, those take the system's
+   ANSI code page, and a folder name it cannot spell (Japanese on a Western Windows, an emoji) comes back as "?": nothing opens and
+   the game closed with no window and no log. The exe's own path through GetModuleFileNameA must name the exe (a name past MAX_PATH
+   bytes fails the same way); when it does not, a message says why (none for the builder's --prepare-shaders run: its log has it). */
+static int narrow_paths_ok(int argc, char **argv) {
+    char a[MAX_PATH];
+    const DWORD n = GetModuleFileNameA(NULL, a, MAX_PATH);
+    if (n && n < MAX_PATH && GetFileAttributesA(a) != INVALID_FILE_ATTRIBUTES) return 1;
+    wchar_t w[MAX_PATH * 2] = L"";
+    GetModuleFileNameW(NULL, w, MAX_PATH * 2);
+    fprintf(stderr, "hookshot: this folder's path cannot be opened (code page %u, %s): move the game to a folder with a plain name\n",
+            GetACP(), n >= MAX_PATH ? "too long" : "has characters the code page lacks");
+    int quiet = getenv("HOS_HEADLESS") != NULL;
+    for (int i = 1; i < argc; i++) quiet |= !strcmp(argv[i], "--prepare-shaders");
+    if (!quiet) {
+        wchar_t text[MAX_PATH * 2 + 640];
+        _snwprintf(text, sizeof text / sizeof text[0],
+                   L"Hookshot can't open its files in this folder:\n\n%ls\n\n"
+                   L"%ls\n\nMove the game folder somewhere with a shorter name of plain letters and digits (for example C:\\Games\\Hookshot), "
+                   L"or update Windows.",
+                   w, GetACP() == CP_UTF8 ? L"The path is too long."
+                                          : L"Its name has characters this Windows can only give the game from Windows 10 version 1903 on.");
+        text[sizeof text / sizeof text[0] - 1] = 0;
+        MessageBoxW(NULL, text, L"Hookshot", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
 #else
 static int game_main(int argc, char **argv) {
 #endif
 #ifdef _WIN32
+    if (!narrow_paths_ok(argc, argv)) return 1;
     load_hookshot_env();
 #endif
     occlusion_switch();
+    {
+        const char *protect_hearts = getenv("HOS_OOT_PROTECT_HEARTS");
+        hos_oot_protect_hearts = protect_hearts && !strcmp(protect_hearts, "1");
+    }
 #ifdef _WIN32
-    const char *protect_hearts = getenv("HOS_OOT_PROTECT_HEARTS");
-    hos_oot_protect_hearts = protect_hearts && !strcmp(protect_hearts, "1");
     {   // (the whole process, not only the window's thread: the renderer asks the window's size from its own, and on a 4K screen at 150%
         // Windows answered such a thread 2560 x 1440: the picture was that size, in the corner of the window. Hookshot issues 15, 18, 20)
         typedef BOOL(WINAPI * SetAware)(void *);
@@ -1351,6 +1383,18 @@ static int game_main(int argc, char **argv) {
     }
 #endif
     {   // (started from its icon the game has nowhere to log to: hookshot_log.txt beside it, last run only, for players to send in)
+#ifdef _WIN32
+        {   /* (started again by the Insert menu's Restart now (host/hos_relaunch.c): the run before still has its log open until
+               it exits, so wait for it (up to 10 s) before the log moves to .1, or the move fails and its log is overwritten) */
+            const char *of = getenv("HOS_RESTART_OF");
+            if (of && *of) {
+                HANDLE before = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)strtoul(of, NULL, 10));
+                if (before) WaitForSingleObject(before, 10000), CloseHandle(before);
+                SetEnvironmentVariableA("HOS_RESTART_OF", NULL);   /* (not passed on: a later restart sets its own) */
+                _putenv("HOS_RESTART_OF=");
+            }
+        }
+#endif
         HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
         if (!err || err == INVALID_HANDLE_VALUE || GetFileType(err) == FILE_TYPE_UNKNOWN) {
             char path[MAX_PATH + 32];
@@ -1466,9 +1510,10 @@ static int game_main(int argc, char **argv) {
     }
     hos_mem_init(hos_image_end);
     {   /* (hookshot) Widescreen and ultrawide (nx2/oot_wide.py): HOS_ASPECT=<ratio> (2.3889 for 3440x1440), else the Insert menu's
-           Ultrawide (off unless it says 1) takes the main monitor's shape. The game's picture takes that shape at its own height (Hor+:
-           the world wider at the sides), its 16:9 cameras the picture's ratio, the HUD, menus and movies the middle 16:9. Until now the
-           one 16:9 constant in the game's data was changed and the 16:9 picture stretched to the window. */
+           Ultrawide (off unless it says 1) takes the main monitor's shape. The game's picture takes that shape at its own height (the
+           world wider at the sides on an ultrawide screen, narrower on a 16:10 or 4:3 one), its 16:9 cameras the picture's ratio. Wider
+           than 16:9 the HUD, menus and movies keep the middle 16:9; narrower they fill the picture's width. Until now the one 16:9
+           constant in the game's data was changed and the 16:9 picture stretched to the window. */
         const char *e = getenv("HOS_ASPECT");
         float want = e ? (float)atof(e) : 0.0f;
         if (!e) {
@@ -1498,8 +1543,11 @@ static int game_main(int argc, char **argv) {
         extern volatile uint64_t hos_wide_out, hos_wide_scene;
         extern volatile float hos_wide_ratio, hos_wide_squeeze, hos_wide_margin;
         const double game = 16.0 / 9.0;
-        if (want > game * 1.01) {
-            double r = want > 32.0 / 9.0 ? 32.0 / 9.0 : want;
+        /* (a screen narrower than 16:9 too, 16:10 to 5:4: the picture keeps the game's height and is narrower, the
+           cameras take its ratio, and the HUD fills its width instead of a middle 16:9 wider than the screen. A 4:3 CRT
+           at the 1440 output: picture 1920 x 1440, scene 1440 x 1080, HUD 100%) */
+        if (want > game * 1.01 || (want > 1.0f && want < game * 0.99)) {
+            double r = want > 32.0 / 9.0 ? 32.0 / 9.0 : want < 5.0 / 4.0 ? 5.0 / 4.0 : want;
             uint32_t hos_output_size(int height);   /* (host/nn_applet.c: the Output resolution's height, 1440 as shipped) */
             unsigned oh = hos_output_size(1), ow = (unsigned)(oh * r / 8 + 0.5) * 8;   /* (whole multiples of 8 pixels) */
             /* (at most 3840 x 2160's pixels, the shape kept: the game's render targets come from a pool sized for its picture
@@ -1514,13 +1562,13 @@ static int game_main(int argc, char **argv) {
             hos_wide_out = (uint64_t)oh << 32 | ow;
             hos_wide_scene = (uint64_t)sh << 32 | sw;
             hos_wide_ratio = (float)ow / (float)oh;
-            hos_wide_squeeze = (float)(game / ((double)ow / oh));
+            hos_wide_squeeze = (float)fmin(1.0, game / ((double)ow / oh));   /* (a narrower screen: the whole width) */
             hos_wide_margin = (1.0f - hos_wide_squeeze) / 2.0f;
             hos_aspect_ratio = hos_wide_ratio;
             hos_log("boot: widescreen: picture %ux%u, scene %ux%u, camera ratio %.4f, HUD and movies in the middle %.1f%%", ow, oh, sw, sh,
                     (double)hos_wide_ratio, hos_wide_squeeze * 100.0);
         } else if (want > 1.0f) {
-            hos_log("boot: widescreen: a %.4f screen is not wider than 16:9: the game's own picture", (double)want);
+            hos_log("boot: widescreen: a %.4f screen is 16:9: the game's own picture", (double)want);
         }
     }
     hos_log("boot: image %zu MB at %#llx, %llu MB of memory for the game", n >> 20, IMAGE_BASE,
