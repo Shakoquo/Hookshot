@@ -2,6 +2,10 @@
 // wants where the GPU has them: mesh shaders, host memory import, graphics pipeline libraries), the window's
 // swapchain, and the rx_* table (vk_api.h). The NVN replay itself is vk_replay.cpp.
 #include "vk_loader.h"
+#ifdef _WIN32
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
+#endif
 
 #include <cstdarg>
 #include <cstdio>
@@ -727,6 +731,71 @@ MkwVkRenderer table;
 } // namespace
 } // namespace mkwvk
 
+// ---- the bridge to Mako (amd-fix 2.2, the last graphics patch of the 2.x line) ----
+// Mako changes the game's own exe, so a 2.x folder needs building again; the 2.x launchers can only install a graphics patch.
+// This patch is that step: at the game's start it offers the update and, on Yes, starts the builder that made the folder
+// (hookshot_version.txt builder=) with --update <folder> --tag <Mako's tag>: the builder fetches the Mako builder from the
+// release and builds the folder again from the game files it keeps, saves and settings staying. No builder: the download page.
+// MAKO_BRIDGE=0: never asked.
+static void mako_bridge() {
+#ifdef _WIN32
+    using mkwvk::logf;
+    const char* off = getenv("MAKO_BRIDGE");
+    if (off && off[0] == '0') return;
+    wchar_t dir[MAX_PATH];
+    DWORD n = GetModuleFileNameW(nullptr, dir, MAX_PATH);
+    if (!n || n >= MAX_PATH) return;
+    while (n && dir[n - 1] != L'\\' && dir[n - 1] != L'/') n--;
+    if (!n) return;
+    dir[n - 1] = 0;
+    std::wstring vf = std::wstring(dir) + L"\\hookshot_version.txt";
+    std::string builder;
+    if (FILE* f = _wfopen(vf.c_str(), L"rb")) {
+        char line[2048];
+        while (fgets(line, sizeof line, f))
+            if (!strncmp(line, "builder=", 8)) {
+                builder = line + 8;
+                while (!builder.empty() && (builder.back() == '\n' || builder.back() == '\r' || builder.back() == ' ')) builder.pop_back();
+            }
+        fclose(f);
+    }
+    wchar_t wb[MAX_PATH] = L"";
+    const bool has_builder = !builder.empty() && MultiByteToWideChar(CP_UTF8, 0, builder.c_str(), -1, wb, MAX_PATH) > 0 &&
+                             GetFileAttributesW(wb) != INVALID_FILE_ATTRIBUTES;
+    const bool kept_files = GetFileAttributesW((std::wstring(dir) + L"\\.hookshot_exefs").c_str()) != INVALID_FILE_ATTRIBUTES;
+    const wchar_t* tag = L"mako-3.0";
+    const wchar_t* page = L"https://github.com/Shakoquo/Hookshot/releases/latest";
+    logf("vk: Mako bridge: builder %s, game files kept %s", has_builder ? "found" : "not found", kept_files ? "yes" : "no");
+    if (has_builder && kept_files) {
+        if (MessageBoxW(nullptr,
+                        L"Hookshot AMD fix is now Mako: new launcher, new look, and all the latest fixes.\n\n"
+                        L"Update now? The game closes and your builder builds this game folder again with Mako. It takes a while "
+                        L"(around 45 minutes, then a first shader preparation). Your saves and settings are kept.\n\n"
+                        L"No: play now, you will be asked again at the next start.",
+                        L"Mako", MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND) != IDYES)
+            return;
+        std::wstring args = std::wstring(L"--update \"") + dir + L"\" --tag \"" + tag + L"\"";
+        std::wstring wdir = wb;
+        size_t slash = wdir.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) wdir.resize(slash);
+        if ((INT_PTR)ShellExecuteW(nullptr, L"open", wb, args.c_str(), slash != std::wstring::npos ? wdir.c_str() : nullptr, SW_SHOWNORMAL) > 32) {
+            logf("vk: Mako bridge: the builder was started; the game closes");
+            ExitProcess(0);
+        }
+        MessageBoxW(nullptr, L"The builder could not be started. The game starts as it is; the Mako download page opens.", L"Mako",
+                    MB_OK | MB_ICONWARNING | MB_TOPMOST);
+        ShellExecuteW(nullptr, L"open", page, nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+    if (MessageBoxW(nullptr,
+                    L"Hookshot AMD fix is now Mako: new launcher, new look, and all the latest fixes.\n\n"
+                    L"The builder that made this game folder was not found, so the update can't start by itself. Open the download "
+                    L"page? Get the Mako builder there and build into this same folder: your saves and settings are kept.",
+                    L"Mako", MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND) == IDYES)
+        ShellExecuteW(nullptr, L"open", page, nullptr, nullptr, SW_SHOWNORMAL);
+#endif
+}
+
 extern "C"
 #ifdef _WIN32
 __declspec(dllexport)
@@ -737,6 +806,7 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
     using namespace mkwvk;
     if (!h || h->version != MKWVK_API_VERSION) return nullptr;
     host = h;
+    mako_bridge();
     if (!load_global()) {
         logf("vk: vulkan-1.dll not found");
         return nullptr;
