@@ -4,11 +4,8 @@
 # checks need a GPU, the game or MSVC, and why. No game data is involved.
 name: Game-free source regressions
 
+# (Mako: inherited from Hookshot; run by hand only, so a push or a tag publishes nothing by itself)
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

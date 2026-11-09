@@ -3,9 +3,8 @@
 # docs/versioning.md. No game data is involved.
 name: Release
 
+# (Mako: inherited from Hookshot; run by hand only, so a push or a tag publishes nothing by itself)
 on:
-  push:
-    branches: [main, next]
   workflow_dispatch:
 
 permissions:

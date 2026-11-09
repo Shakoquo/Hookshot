@@ -7,11 +7,8 @@
 # (HookshotBuilder.exe) and its list (hookshot-setup.txt) to the tag's release, beside the Linux AppImage.
 name: Windows builder
 
+# (Mako: inherited from Hookshot; run by hand only, so a push or a tag publishes nothing by itself)
 on:
-  push:
-    branches: [main]
-    tags: ['*']
-  pull_request:
   workflow_dispatch:
 
 permissions:

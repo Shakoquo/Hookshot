@@ -3,12 +3,10 @@
 # Built in Ubuntu 22.04, the oldest system it is for (glibc 2.35). A workflow artifact on every run; on a tag, also an
 # asset of that tag's release (scripts/release_upload.sh, shared with the Windows builder workflow).
 name: Linux AppImage
+# (Mako: inherited from Hookshot; run by hand only, so a push or a tag publishes nothing by itself)
 on:
-  push:
-    branches: [main]
-    tags: ['*']
-  pull_request:
   workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
