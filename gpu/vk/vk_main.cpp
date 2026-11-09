@@ -754,9 +754,15 @@ bool started_up() {
     if (precompile_wanted()) {   // (a release build, before the game: nothing to build during play)
 #ifdef _WIN32
         // (amd-fix) a window with a bar while it lasts (prep_ui above)
-        prepare_run([](size_t d, size_t n) { prep_ui::report(1, d, n); });
-        precompile_run([](size_t d, size_t n) { prep_ui::report(2, d, n); });
-        prep_ui::finish();
+        {   // (as below: an update prepares what the state lists name now, the rest in play)
+            const auto step1 = [](size_t d, size_t n) { prep_ui::report(1, d, n); };
+            const bool update = prepare_is_update();
+            if (!update && prepare_run(step1, false)) predict_run(step1);
+            if (update) state_list_run();
+            precompile_run([](size_t d, size_t n) { prep_ui::report(2, d, n); });
+            prep_ui::finish();
+            if (update) prepare_background();
+        }
         return true;
 #endif
         // (a console while it lasts: there is no window yet, and a long wait with nothing on screen looks like a hang)

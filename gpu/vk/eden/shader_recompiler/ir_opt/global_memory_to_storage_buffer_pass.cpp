@@ -1489,14 +1489,6 @@ void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info, 
         if (cbuf_load_rule && storage_buffer && storage_buffer->index != 0 && g_graphics_stage && Origins(inst.Arg(0)).load) {
             storage_buffer.reset();
         }
-        // (upstream 0b286cc) A float add has no run-time search: its fallback stores nothing, so where the search above found only a
-        // c1 word the sum was lost. OoT's 499dbfd0721d2858 adds the sky's spherical harmonics (the outdoor ambient light) at
-        // c0+0x20's buffer plus a c1 offset: the c0 pointer beside that offset is the base. Without it the scene lost its ambient
-        // light and the exposure lifted the dark night until it looked like day. EDEN_F32_ADD_TRACK=0: as before
-        static const bool f32_track{!std::getenv("EDEN_F32_ADD_TRACK") || std::atoi(std::getenv("EDEN_F32_ADD_TRACK")) != 0};
-        if (!storage_buffer && f32_track && inst.GetOpcode() == IR::Opcode::GlobalAtomicAddF32) {
-            storage_buffer = Track(low_addr, nullptr, true);
-        }
         if (!storage_buffer) {
             // If that also fails, use NVN fallbacks (and the table it reads the address from, if it does)
             leave_global();
