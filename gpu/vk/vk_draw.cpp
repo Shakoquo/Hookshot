@@ -566,6 +566,7 @@ struct Targets {
 struct PipeEntry {
     std::atomic<bool> ready{false};
     std::atomic<VkPipeline> pipeline{VK_NULL_HANDLE};   // (a fast-linked one first, the worker's full build over it)
+    std::shared_ptr<JobClaim> claim;   // (hookshot: its build, which a draw that must wait runs itself if no worker took it yet)
 };
 std::unordered_map<uint64_t, std::unique_ptr<PipeEntry>> pipelines;   // (the replay thread's)
 int64_t st_draws, st_skipped, st_dispatches, st_passes, st_mesh, st_pending_skips, st_waits;
@@ -880,7 +881,7 @@ PipeEntry* graphics_pipeline(const Program& p, const NvnState& s, const Targets&
     };
     auto job = std::make_shared<Job>();
     job->e = e, job->p = &p, job->s = s, job->at = at, job->topo = topo;
-    jobs_push([job] {
+    e->claim = jobs_push_claim([job] {
         // (over a linked one, which is left alone: draws recorded with it may still be on their way)
         if (const VkPipeline full = build_graphics(*job->p, job->s, job->at, job->topo)) job->e->pipeline = full;
         job->e->ready.store(true, std::memory_order_release);
@@ -4119,6 +4120,12 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     }
     if (!pe->ready.load(std::memory_order_acquire)) {
         if (may_skip) return void(st_pending_skips++);
+        // (hookshot) built here when no worker has started it: otherwise the draw waited behind every queued job
+        // (RX 6600 log: one draw 118 s, "26 jobs queued")
+        if (jobs_claim_run(pe->claim)) {
+            static std::atomic<int> told{0};
+            if (told++ < 10) logf("vk: a draw's pipeline built where it waited (%d jobs queued)", jobs_pending());
+        }
         wait_for(pe->ready);
     }
     const VkPipeline pl = pe->pipeline;

@@ -5,8 +5,20 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 
 namespace mkwvk {
+
+/// (hookshot) A queued job that whoever takes it first runs: a worker, or the thread that must wait for it
+struct JobClaim {
+    std::atomic<bool> taken{false};
+    std::function<void()> fn;
+};
+/// Queues fn as a job a waiter may take over (jobs_claim_run)
+std::shared_ptr<JobClaim> jobs_push_claim(std::function<void()> fn, bool urgent = false);
+/// Runs the job on this thread when no worker has taken it yet (true: it ran here). A draw that has to wait for its
+/// pipeline builds it itself instead of waiting behind every job queued before it (RX 6600: 118 s frozen, 26 jobs queued)
+bool jobs_claim_run(const std::shared_ptr<JobClaim>& c);
 
 /// Queues fn for a worker (urgent: ahead of the others, for work a draw waits on)
 void jobs_push(std::function<void()> fn, bool urgent = false);

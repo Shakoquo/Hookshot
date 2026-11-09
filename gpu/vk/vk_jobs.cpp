@@ -83,6 +83,21 @@ void jobs_push_serial(std::function<void()> fn) {
     sq.push_back(std::move(fn));
     scv.notify_one();
 }
+std::shared_ptr<JobClaim> jobs_push_claim(std::function<void()> fn, bool urgent) {
+    auto c = std::make_shared<JobClaim>();
+    c->fn = std::move(fn);
+    jobs_push([c] {
+        if (!c->taken.exchange(true, std::memory_order_acq_rel)) c->fn();
+    }, urgent);
+    return c;
+}
+bool jobs_claim_run(const std::shared_ptr<JobClaim>& c) {
+    static const bool off = getenv("RX_VK_NO_CLAIM") != nullptr;   // (RX_VK_NO_CLAIM=1: waited for behind the queue, as before)
+    if (off || !c || c->taken.exchange(true, std::memory_order_acq_rel)) return false;
+    c->fn();
+    jobs_notify();
+    return true;
+}
 void jobs_notify() {
     std::lock_guard lk(mu);
     done_cv.notify_all();
