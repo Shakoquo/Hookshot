@@ -528,13 +528,12 @@ std::atomic<HWND> wnd{nullptr};
 std::thread thread;
 std::chrono::steady_clock::time_point t0;
 HFONT font = nullptr, bold = nullptr;
-// (the window thread's own: the rate of the last 30 s, for the time left; begun again at each step)
-struct Sample {
-    double t;
-    size_t done;
-};
-std::vector<Sample> samples;
+// (the window thread's own: the step's average rate since it began, for the time left. The rate of the last 30 s swung from
+// minutes to days on an AMD card (a run of compute programs, each built by the driver, then thousands of cheap ones): no
+// figure before 5% of the step, then the average, smoothed)
 int samples_step = -1;
+double step_t = 0;
+size_t step_d = 0;
 double eta_s = -1;
 
 double now_s() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); }
@@ -543,14 +542,11 @@ void sample() {
     const double t = now_s();
     const int st = step.load();
     const size_t d = done.load(), n = total.load();
-    if (st != samples_step) samples.clear(), samples_step = st, eta_s = -1;
-    samples.push_back({t, d});
-    while (samples.size() > 2 && t - samples.front().t > 30) samples.erase(samples.begin());
-    const Sample& a = samples.front();
+    if (st != samples_step) samples_step = st, step_t = t, step_d = d, eta_s = -1;
     if (n && d >= n) eta_s = 0;
-    else if (t - a.t >= 8 && d > a.done) {
-        const double left = (double)(n - d) * (t - a.t) / (double)(d - a.done);
-        eta_s = eta_s < 0 ? left : eta_s * 0.85 + left * 0.15;   // (smoothed: the programs differ a lot in cost)
+    else if (n && d > step_d && (d - step_d) * 20 >= n - step_d && t - step_t >= 8) {
+        const double left = (double)(n - d) * (t - step_t) / (double)(d - step_d);
+        eta_s = eta_s < 0 ? left : eta_s * 0.85 + left * 0.15;
     }
 }
 
