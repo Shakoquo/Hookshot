@@ -52,13 +52,42 @@ public static class Cut {
       // (walled by the body, not by blue glow: the pixels just outside it are all core)
       foreach (int p in comp) solid[p] = true;
     }
+    // (the background is a dark gradient, lighter in the middle: estimated locally - per 8x8 cell the darkest of the cells within
+    // 48 pixels (streaks and glow are thinner than that), smoothed, read back bilinearly. One colour for all of it left the lighter
+    // middle as white grain.)
+    const int C = 8; int cw = (W + C - 1) / C, ch = (H + C - 1) / C;
+    var cell = new double[3, cw * ch];
+    for (int cy = 0; cy < ch; cy++) for (int cx = 0; cx < cw; cx++) {
+      double[] sum = new double[3]; int cnt = 0;
+      for (int y = cy * C; y < Math.Min(H, cy * C + C); y++) for (int x = cx * C; x < Math.Min(W, cx * C + C); x++) {
+        int i = y * st + x * 4; sum[0] += orig[i + 2]; sum[1] += orig[i + 1]; sum[2] += orig[i]; cnt++; }
+      for (int j = 0; j < 3; j++) cell[j, cy * cw + cx] = sum[j] / cnt;
+    }
+    Func<double[,], int, double[,]> pass = (src, mode) => {   // mode 0: min over radius 6 cells; 1: mean over radius 4
+      var o = new double[3, cw * ch]; int r = mode == 0 ? 6 : 4;
+      for (int cy = 0; cy < ch; cy++) for (int cx = 0; cx < cw; cx++) for (int j = 0; j < 3; j++) {
+        double v = mode == 0 ? 1e9 : 0; int cnt = 0;
+        for (int yy = Math.Max(0, cy - r); yy <= Math.Min(ch - 1, cy + r); yy++) for (int xx = Math.Max(0, cx - r); xx <= Math.Min(cw - 1, cx + r); xx++) {
+          double q = src[j, yy * cw + xx]; if (mode == 0) { if (q < v) v = q; } else { v += q; cnt++; } }
+        o[j, cy * cw + cx] = mode == 0 ? v : v / cnt;
+      }
+      return o;
+    };
+    var bgm = pass(pass(cell, 0), 1);
+    Func<int, int, int, double> bgAt = (x, y, j) => {
+      double fx = Math.Max(0, Math.Min(cw - 1.001, (x + 0.5) / C - 0.5)), fy = Math.Max(0, Math.Min(ch - 1.001, (y + 0.5) / C - 0.5));
+      int gx = (int)fx, gy = (int)fy; double ax = fx - gx, ay = fy - gy;
+      return (bgm[j, gy * cw + gx] * (1 - ax) + bgm[j, gy * cw + gx + 1] * ax) * (1 - ay) +
+             (bgm[j, (gy + 1) * cw + gx] * (1 - ax) + bgm[j, (gy + 1) * cw + gx + 1] * ax) * ay;
+    };
     for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
       int i = y * st + x * 4, p = y * W + x;
       if (solid[p]) { px[i + 3] = 255; continue; }   // (the body and its inner details: as drawn)
-      double[] c = { px[i + 2], px[i + 1], px[i] }, k = { br, bgc, bb };
+      double[] c = { px[i + 2], px[i + 1], px[i] }, k = { bgAt(x, y, 0) + 3, bgAt(x, y, 1) + 3, bgAt(x, y, 2) + 3 };
       double a = 0;
       for (int j = 0; j < 3; j++) if (c[j] > k[j]) a = Math.Max(a, (c[j] - k[j]) / (255 - k[j]));
-      a = Math.Min(1, Math.Max(0, (a - 0.05) / 0.95) * 1.05);   // (the background's own grain: nothing)
+      a = Math.Min(1, Math.Max(0, (a - 0.07) / 0.93) * 1.05);   // (the background's own grain: nothing)
+      a = a * a * (3 - 2 * a) * 0.35 + a * 0.65;   // (a softer start, so no speckles where the glow fades out)
       if (a <= 0.004) { px[i] = px[i + 1] = px[i + 2] = px[i + 3] = 0; continue; }
       for (int j = 0; j < 3; j++) c[j] = Math.Max(0, Math.Min(255, k[j] + (c[j] - k[j]) / a));
       px[i + 2] = (byte)c[0]; px[i + 1] = (byte)c[1]; px[i] = (byte)c[2]; px[i + 3] = (byte)(a * 255);
