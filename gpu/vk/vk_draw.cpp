@@ -13,6 +13,7 @@
 #include <memory>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
 #include <cstdarg>
 #include <deque>
 #include <mutex>
@@ -4901,29 +4902,54 @@ void prepare_run(void (*progress)(size_t done, size_t total)) {
     // nothing: a kept library costs memory, and our pipeline cache would be read in whole at every start. A driver whose compiler
     // crashes on one of them (it happens: TotK Recomp's issue 30) would crash here at every start: the file says this step began and
     // did not end, and the next start goes without it. Those libraries are then built when a draw first needs them
+    // (amd-fix) The file also says how far the step got, and how many starts in a row ended there. A start that was closed goes on
+    // from there: players took the 15+ minutes of a first start on some AMD cards for a hang and closed it, and the step was then
+    // left out for good: every shader built in play, freezes of up to 50 s (2026-11-08). Only three starts in a row ending at the
+    // same place (a driver whose compiler crashes on one program) leave the step out, as before
     const std::string warming = path + ".warming";
     bool warm = gpl_wanted() && !getenv("RX_VK_NO_WARM");
     bool warm_cs = !getenv("RX_VK_NO_WARM");
+    size_t resume_from = 0;
     if (FILE* f = fopen(warming.c_str(), "rb")) {
+        unsigned long long at = 0;
+        int ended = 0;
+        if (fscanf(f, "%llu %d", &at, &ended) != 2) at = 0, ended = 1;   // (an older build's mark: empty)
         fclose(f);
-        warm = warm_cs = false;
-        logf("vk: the last start did not finish the driver's part of the shaders: left out");
+        if (ended >= 3) {
+            warm = warm_cs = false;
+            logf("vk: the last three starts ended at the same place in the driver's part of the shaders: left out");
+            remove(warming.c_str());
+        } else {
+            resume_from = (size_t)at;
+            logf("vk: the last start did not finish the driver's part of the shaders: going on from %zu", resume_from);
+            if (FILE* w = fopen(warming.c_str(), "wb")) fprintf(w, "%llu %d\n", at, ended + 1), fclose(w);
+        }
     } else if (warm || warm_cs) {
-        if (FILE* w = fopen(warming.c_str(), "wb")) fclose(w);
+        if (FILE* w = fopen(warming.c_str(), "wb")) fprintf(w, "0 1\n"), fclose(w);
     }
     auto blank = std::make_unique<NvnState>();
     blank->nvattr = 16;
     pcache_init();   // (once, here: the workers below build compute pipelines into it)
     std::atomic<size_t> next{0}, done{0}, made{0}, libs{0};
-    const auto worker = [&] {
+    const unsigned cpus = std::max(1u, std::thread::hardware_concurrency());
+    const unsigned n_threads = std::clamp(cpus / 2, 1u, 32u);
+    // (amd-fix) the item each worker is on: the lowest of them is where a next start would go on from
+    std::unique_ptr<std::atomic<size_t>[]> at_work(new std::atomic<size_t>[n_threads]);
+    for (unsigned t = 0; t < n_threads; t++) at_work[t] = SIZE_MAX;
+    const auto worker = [&](unsigned t) {
         // (below normal, and half the CPUs, below: on all of them at High the driver's compiles froze the whole PC)
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         for (;;) {
+            at_work[t] = next.load();   // (before taking one: never above the item taken)
             const size_t i = next++;
-            if (i >= total) return;
+            if (i >= total) {
+                at_work[t] = SIZE_MAX;
+                return;
+            }
+            const bool warm_this = i >= resume_from;   // (below: done by a start before this one)
             if (std::unique_ptr<Program> p = seed_program(i / 3, (int)(i % 3))) {
                 if (!p->failed) made++;
-                if (!p->failed && warm_cs && p->compute && !taau_key(p->key)) {
+                if (!p->failed && warm_cs && warm_this && p->compute && !taau_key(p->key)) {
                     // (hookshot) compute pipelines too, for the driver's own cache: built in play they stopped the game while the
                     // driver compiled them, seconds each for the culling programs (53caac5f: 6.5 s, 41 s inlined), which looked like a hang
                     ensure_layout(*p);
@@ -4944,7 +4970,7 @@ void prepare_run(void (*progress)(size_t done, size_t total)) {
                         pcache_built_since_save++;
                     }
                 }
-                if (!p->failed && warm && !p->compute) {
+                if (!p->failed && warm && warm_this && !p->compute) {
                     ensure_layout(*p);
                     Targets at{};
                     for (int part = 1; part <= 2; part++)
@@ -4962,11 +4988,24 @@ void prepare_run(void (*progress)(size_t done, size_t total)) {
         }
     };
     std::vector<std::thread> threads;
-    const unsigned cpus = std::max(1u, std::thread::hardware_concurrency());
-    for (unsigned i = 0; i < std::clamp(cpus / 2, 1u, 32u); i++) threads.emplace_back(worker);
+    for (unsigned t = 0; t < n_threads; t++) threads.emplace_back(worker, t);
+    auto last_mark = std::chrono::steady_clock::now();
+    size_t marked = resume_from;
     while (done.load() < total) {
         if (progress) progress(done.load(), total);
         Sleep(100);
+        // (amd-fix) every 5 s, how far it got: a start that ends now goes on from here. Further than the last mark: "one start
+        // ended here", the count of starts in a row that ended at one place begins again
+        if ((warm || warm_cs) && std::chrono::steady_clock::now() - last_mark > std::chrono::seconds(5)) {
+            last_mark = std::chrono::steady_clock::now();
+            size_t low = next.load();
+            for (unsigned t = 0; t < n_threads; t++) low = std::min(low, at_work[t].load());
+            low = std::min(low, total);
+            if (low > marked) {
+                marked = low;
+                if (FILE* w = fopen(warming.c_str(), "wb")) fprintf(w, "%llu 1\n", (unsigned long long)low), fclose(w);
+            }
+        }
         if (next.load() >= total + threads.size()) break;
     }
     for (std::thread& t : threads) t.join();

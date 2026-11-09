@@ -6,6 +6,9 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -387,6 +390,200 @@ bool create_swapchain(uint32_t width, uint32_t height) {
 namespace {
 
 HWND main_window = nullptr;
+
+#ifdef _WIN32
+// ---- (amd-fix) The shaders' preparation in a window of its own: a bar with the real count, the step, the time spent and the
+// time left. It was a console, often behind the game's black window: players took the long first start of a version (15+ min on
+// some AMD cards) for a hang and closed it, and the next starts then built every shader in play (freezes of up to 50 s,
+// 2026-11-08). The window has its own thread: the preparing one only stores counts ----
+namespace prep_ui {
+std::atomic<size_t> done{0}, total{0};
+std::atomic<int> step{0};
+std::atomic<bool> finished{false};
+std::atomic<HWND> wnd{nullptr};
+std::thread thread;
+std::chrono::steady_clock::time_point t0;
+HFONT font = nullptr, bold = nullptr;
+// (the window thread's own: the rate of the last 30 s, for the time left; begun again at each step)
+struct Sample {
+    double t;
+    size_t done;
+};
+std::vector<Sample> samples;
+int samples_step = -1;
+double eta_s = -1;
+
+double now_s() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); }
+
+void sample() {
+    const double t = now_s();
+    const int st = step.load();
+    const size_t d = done.load(), n = total.load();
+    if (st != samples_step) samples.clear(), samples_step = st, eta_s = -1;
+    samples.push_back({t, d});
+    while (samples.size() > 2 && t - samples.front().t > 30) samples.erase(samples.begin());
+    const Sample& a = samples.front();
+    if (n && d >= n) eta_s = 0;
+    else if (t - a.t >= 8 && d > a.done) {
+        const double left = (double)(n - d) * (t - a.t) / (double)(d - a.done);
+        eta_s = eta_s < 0 ? left : eta_s * 0.85 + left * 0.15;   // (smoothed: the programs differ a lot in cost)
+    }
+}
+
+std::string clock_text(double s) {
+    const int v = (int)(s + 0.5);
+    char b[32];
+    if (v >= 3600) snprintf(b, sizeof b, "%d:%02d:%02d", v / 3600, v / 60 % 60, v % 60);
+    else snprintf(b, sizeof b, "%d:%02d", v / 60, v % 60);
+    return b;
+}
+
+void paint(HWND h) {
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(h, &ps);
+    RECT rc;
+    GetClientRect(h, &rc);
+    const int w = rc.right, ht = rc.bottom;
+    HDC mem = CreateCompatibleDC(dc);   // (drawn aside, then copied: no flicker at each tick)
+    HBITMAP bmp = CreateCompatibleBitmap(dc, w, ht);
+    HGDIOBJ old_bmp = SelectObject(mem, bmp);
+    HGDIOBJ old_font = SelectObject(mem, font);
+    HBRUSH bg = CreateSolidBrush(RGB(30, 32, 38));
+    FillRect(mem, &rc, bg);
+    DeleteObject(bg);
+    SetBkMode(mem, TRANSPARENT);
+    const int m = 22;
+    int y = 16;
+    const auto line = [&](HFONT f, COLORREF c, const char* s, int height) {
+        SelectObject(mem, f);
+        SetTextColor(mem, c);
+        RECT r{m, y, w - m, y + height};
+        DrawTextA(mem, s, -1, &r, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        y += height;
+    };
+    const int st = step.load();
+    const size_t d = done.load(), n = total.load();
+    const double frac = n ? std::min(1.0, (double)d / (double)n) : 0.0;
+    line(bold, RGB(240, 240, 240), "Preparing the game's shaders", 34);
+    line(font, RGB(190, 194, 204), "This is done once, on the first start of a new version.", 24);
+    line(font, RGB(190, 194, 204), "On some graphics cards it takes 10 to 30 minutes.", 24);
+    line(font, RGB(240, 190, 80), "Please don't close the game, even if its window stays black.", 24);
+    y += 12;
+    RECT bar{m, y, w - m, y + 24};
+    HBRUSH frame = CreateSolidBrush(RGB(70, 74, 84)), back = CreateSolidBrush(RGB(48, 51, 59)),
+           fill = CreateSolidBrush(RGB(212, 172, 60));
+    FillRect(mem, &bar, back);
+    RECT filled = bar;
+    filled.right = bar.left + (int)((bar.right - bar.left) * frac + 0.5);
+    if (filled.right > filled.left) FillRect(mem, &filled, fill);
+    FrameRect(mem, &bar, frame);
+    DeleteObject(frame), DeleteObject(back), DeleteObject(fill);
+    y += 24 + 12;
+    char text[160];
+    snprintf(text, sizeof text, "Step %d of 2 (%s): %d%%   -   %zu of %zu", st == 2 ? 2 : 1, st == 2 ? "pipelines" : "shaders",
+             (int)(frac * 100), d, n);
+    line(font, RGB(240, 240, 240), text, 24);
+    std::string left;
+    if (eta_s < 0) left = "working out the time left...";
+    else if (eta_s < 60) left = "less than a minute left in this step";
+    else {
+        snprintf(text, sizeof text, "about %d min left in this step", (int)((eta_s + 59) / 60));
+        left = text;
+    }
+    const std::string times = "Time spent " + clock_text(now_s()) + "   -   " + left;
+    line(font, RGB(190, 194, 204), times.c_str(), 24);
+    BitBlt(dc, 0, 0, w, ht, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, old_font);
+    SelectObject(mem, old_bmp);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+    EndPaint(h, &ps);
+}
+
+LRESULT CALLBACK proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_TIMER:
+        sample();
+        InvalidateRect(h, nullptr, FALSE);
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        paint(h);
+        return 0;
+    case WM_CLOSE:   // (asked first: a close here is what the bar is there to prevent)
+        if (MessageBoxA(h, "The shaders are still being prepared.\n\nIf you close the game now, the next start goes on from about "
+                           "where this one stopped.\n\nClose the game anyway?",
+                        "Hookshot", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST) == IDYES)
+            TerminateProcess(GetCurrentProcess(), 0);
+        return 0;
+    case WM_APP:
+        DestroyWindow(h);
+        return 0;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcA(h, msg, wp, lp);
+}
+
+void run() {
+    // (shown after a second only: a start with everything prepared already goes through here in a moment)
+    while (!finished.load() && now_s() < 1.0) Sleep(50);
+    if (finished.load()) return;
+    HINSTANCE inst = GetModuleHandleA(nullptr);
+    WNDCLASSA wc{};
+    wc.lpfnWndProc = proc;
+    wc.hInstance = inst;
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconA(inst, MAKEINTRESOURCEA(1));   // (the game's own, when it has one with that number)
+    wc.lpszClassName = "HookshotPrepareShaders";
+    RegisterClassA(&wc);
+    font = CreateFontA(-17, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                       DEFAULT_PITCH | FF_SWISS, "Segoe UI");
+    bold = CreateFontA(-23, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                       DEFAULT_PITCH | FF_SWISS, "Segoe UI");
+    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, ex = WS_EX_TOPMOST | WS_EX_APPWINDOW;
+    RECT r{0, 0, 600, 244};
+    AdjustWindowRectEx(&r, style, FALSE, ex);
+    const int ww = r.right - r.left, wh = r.bottom - r.top;
+    const int x = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, y = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
+    HWND h = CreateWindowExA(ex, wc.lpszClassName, "Hookshot - preparing shaders", style, x, y, ww, wh, nullptr, nullptr, inst, nullptr);
+    if (h) {
+        wnd = h;
+        sample();
+        SetTimer(h, 1, 250, nullptr);
+        ShowWindow(h, SW_SHOWNORMAL);
+        SetForegroundWindow(h);
+        if (finished.load()) PostMessageA(h, WM_APP, 0, 0);   // (it ended between the check above and wnd)
+        MSG msg;
+        while (GetMessageA(&msg, nullptr, 0, 0) > 0) {
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+        wnd = nullptr;
+    }
+    DeleteObject(font), DeleteObject(bold);
+    font = bold = nullptr;
+}
+
+void report(int st, size_t d, size_t n) {
+    if (!n) return;
+    if (!thread.joinable()) {
+        t0 = std::chrono::steady_clock::now();
+        thread = std::thread(run);
+    }
+    total = n, done = d, step = st;
+}
+
+void finish() {
+    finished = true;
+    if (HWND h = wnd.load()) PostMessageA(h, WM_APP, 0, 0);
+    if (thread.joinable()) thread.join();
+}
+} // namespace prep_ui
+#endif
+
 // (hookshot) hookshot --prepare-shaders (a builder, after a build): the same work with no game, its progress as
 // "@@progress" lines on stdout. A skip there leaves hookshot_prepare_skipped beside the game: its own starts then
 // leave the work out too (what was not prepared is built when first drawn), until a --prepare-shaders run ends it
@@ -427,6 +624,13 @@ bool started_up() {
         return true;
     }
     if (precompile_wanted()) {   // (a release build, before the game: nothing to build during play)
+#ifdef _WIN32
+        // (amd-fix) a window with a bar while it lasts (prep_ui above)
+        prepare_run([](size_t d, size_t n) { prep_ui::report(1, d, n); });
+        precompile_run([](size_t d, size_t n) { prep_ui::report(2, d, n); });
+        prep_ui::finish();
+        return true;
+#endif
         // (a console while it lasts: there is no window yet, and a long wait with nothing on screen looks like a hang)
         static HANDLE console = nullptr;
         const auto progress = [](size_t done, size_t total) {
