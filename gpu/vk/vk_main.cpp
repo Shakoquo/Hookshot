@@ -763,7 +763,7 @@ static void mako_bridge() {
     const bool has_builder = !builder.empty() && MultiByteToWideChar(CP_UTF8, 0, builder.c_str(), -1, wb, MAX_PATH) > 0 &&
                              GetFileAttributesW(wb) != INVALID_FILE_ATTRIBUTES;
     const bool kept_files = GetFileAttributesW((std::wstring(dir) + L"\\.hookshot_exefs").c_str()) != INVALID_FILE_ATTRIBUTES;
-    const wchar_t* tag = L"mako-3.0";
+    const wchar_t* tag = L"mako-3.0.1";
     const wchar_t* page = L"https://github.com/Shakoquo/Hookshot/releases/latest";
     logf("vk: Mako bridge: builder %s, game files kept %s", has_builder ? "found" : "not found", kept_files ? "yes" : "no");
     if (has_builder && kept_files) {
@@ -787,12 +787,69 @@ static void mako_bridge() {
         ShellExecuteW(nullptr, L"open", page, nullptr, nullptr, SW_SHOWNORMAL);
         return;
     }
+    // (no builder known: the 2.x builds never wrote builder= - their tools have VERSION, make_game looked for version.txt. So the
+    // Mako builder is fetched here: a console script downloads the release's HookshotBuilder.zip with Windows' own curl.exe, unpacks
+    // it with tar.exe into %LOCALAPPDATA%\Mako\builders\<tag> (where the Mako launcher puts it too) and starts it with --update; its
+    // tools are that tag, so it builds at once. Any step failing: the download page.)
+    if (!kept_files) {
+        if (MessageBoxW(nullptr,
+                        L"Hookshot AMD fix is now Mako: new launcher, new look, and all the latest fixes.\n\n"
+                        L"This game folder has no copy of the game files to update from. Open the download page? Get the Mako "
+                        L"builder there and build into this same folder: your saves and settings are kept.",
+                        L"Mako", MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND) == IDYES)
+            ShellExecuteW(nullptr, L"open", page, nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
     if (MessageBoxW(nullptr,
                     L"Hookshot AMD fix is now Mako: new launcher, new look, and all the latest fixes.\n\n"
-                    L"The builder that made this game folder was not found, so the update can't start by itself. Open the download "
-                    L"page? Get the Mako builder there and build into this same folder: your saves and settings are kept.",
-                    L"Mako", MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND) == IDYES)
-        ShellExecuteW(nullptr, L"open", page, nullptr, nullptr, SW_SHOWNORMAL);
+                    L"Update now? The game closes, Mako is downloaded (about 270 MB, a window shows it) and builds this game folder "
+                    L"again: around 45 minutes, then a first shader preparation. Your saves and settings are kept.\n\n"
+                    L"No: play now, you will be asked again at the next start.",
+                    L"Mako", MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND) != IDYES)
+        return;
+    const auto utf8 = [](const std::wstring& w) {
+        int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+        std::string s(len > 0 ? len : 0, '\0');
+        if (len > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], len, nullptr, nullptr);
+        return s;
+    };
+    wchar_t tmp[MAX_PATH];
+    DWORD tn = GetTempPathW(MAX_PATH, tmp);
+    bool started = false;
+    if (tn && tn < MAX_PATH) {
+        std::wstring script = std::wstring(tmp) + L"mako-update.cmd";
+        if (FILE* f = _wfopen(script.c_str(), L"wb")) {
+            std::string s;
+            s += "@echo off\r\nchcp 65001 >nul\r\ntitle Mako update\r\n";
+            s += "set \"D=%LOCALAPPDATA%\\Mako\\builders\\" + utf8(tag) + "\"\r\n";
+            s += "echo.\r\necho   MAKO - downloading the Mako builder (about 270 MB)...\r\necho.\r\n";
+            s += "if not exist \"%D%\" mkdir \"%D%\"\r\n";
+            s += "curl.exe -L --fail --retry 3 -o \"%D%\\HookshotBuilder.zip\" "
+                 "\"https://github.com/Shakoquo/Hookshot/releases/download/" + utf8(tag) + "/HookshotBuilder.zip\" || goto fail\r\n";
+            s += "echo.\r\necho   Unpacking...\r\n";
+            s += "if exist \"%D%\\HookshotBuilder\" rmdir /s /q \"%D%\\HookshotBuilder\"\r\n";
+            s += "tar.exe -xf \"%D%\\HookshotBuilder.zip\" -C \"%D%\" || goto fail\r\n";
+            s += "if not exist \"%D%\\HookshotBuilder\\HookshotBuilder.exe\" goto fail\r\n";
+            s += "del \"%D%\\HookshotBuilder.zip\" >nul 2>&1\r\n";
+            s += "echo.\r\necho   Starting the Mako builder: keep its window open until your game is ready.\r\n";
+            s += "start \"\" \"%D%\\HookshotBuilder\\HookshotBuilder.exe\" --update \"" + utf8(dir) + "\" --tag \"" + utf8(tag) + "\"\r\n";
+            s += "timeout /t 5 >nul\r\nexit /b 0\r\n";
+            s += ":fail\r\necho.\r\necho   The download did not work (internet, antivirus?). The Mako download page opens:\r\n"
+                 "echo   get HookshotBuilder.zip there and build into this same game folder.\r\n";
+            s += "start \"\" \"" + utf8(page) + "\"\r\npause\r\n";
+            started = fwrite(s.data(), 1, s.size(), f) == s.size();
+            fclose(f);
+            if (started)
+                started = (INT_PTR)ShellExecuteW(nullptr, L"open", script.c_str(), nullptr, tmp, SW_SHOWNORMAL) > 32;
+        }
+    }
+    if (started) {
+        logf("vk: Mako bridge: the download was started; the game closes");
+        ExitProcess(0);
+    }
+    MessageBoxW(nullptr, L"The update could not be started. The game starts as it is; the Mako download page opens.", L"Mako",
+                MB_OK | MB_ICONWARNING | MB_TOPMOST);
+    ShellExecuteW(nullptr, L"open", page, nullptr, nullptr, SW_SHOWNORMAL);
 #endif
 }
 
