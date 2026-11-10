@@ -23,13 +23,17 @@ inline ImU32 alpha(ImU32 c, float k) {
 }
 
 // ---- the palette ----
-constexpr ImU32 kInk = rgba(240, 232, 214), kInkBright = rgba(255, 250, 240), kSoft = rgba(214, 204, 184), kDim = rgba(168, 156, 136),
-                kGold = rgba(222, 152, 40), kGoldHi = rgba(238, 168, 52), kGoldInk = rgba(36, 24, 8), kAccent = rgba(214, 170, 96),
-                kEdge = rgba(122, 98, 64, 150), kCellDark = rgba(30, 25, 19, 246), kCellName = rgba(60, 47, 32, 240),
-                kCellNameSel = rgba(92, 70, 42, 248), kBronze = rgba(84, 64, 38), kColumn = rgba(34, 26, 17, 228),
-                kBannerTop = rgba(184, 146, 96, 246), kBanner = rgba(176, 138, 88, 246), kBannerInk = rgba(46, 30, 12),
-                kBannerEdge = rgba(70, 48, 24), kTabInset = rgba(84, 56, 30, 250), kBox = rgba(36, 28, 19, 248),
-                kBoxEdge = rgba(122, 98, 64, 220), kBar = rgba(22, 17, 11, 232), kListen = rgba(150, 120, 40);
+// (Mako) Its own look, the launcher's: deep navy panels, an electric blue selection with white text on it, cyan accents, rounded
+// corners. Every text keeps 4.5:1 or more on its own background (WCAG AA); the selection's blue is dark enough for white text.
+constexpr ImU32 kInk = rgba(232, 240, 250), kInkBright = rgba(255, 255, 255), kSoft = rgba(186, 202, 224), kDim = rgba(138, 156, 184),
+                kGold = rgba(22, 92, 206), kGoldHi = rgba(96, 200, 255), kGoldInk = rgba(255, 255, 255), kAccent = rgba(88, 196, 255),
+                kSelTop = rgba(40, 122, 236), kSelBot = rgba(22, 92, 206),
+                kEdge = rgba(72, 96, 136, 150), kCellDark = rgba(10, 16, 28, 246), kCellName = rgba(20, 30, 50, 240),
+                kCellNameSel = rgba(30, 50, 86, 248), kBronze = rgba(34, 50, 80), kColumn = rgba(8, 13, 24, 228),
+                kBannerTop = rgba(18, 28, 48, 250), kBanner = rgba(10, 17, 32, 250), kBannerInk = rgba(214, 226, 244),
+                kBannerEdge = rgba(88, 196, 255), kTabInset = rgba(34, 58, 100, 250), kChip = rgba(36, 52, 84), kBox = rgba(12, 19, 34, 248),
+                kBoxEdge = rgba(64, 90, 132, 220), kBar = rgba(6, 10, 20, 236), kListen = rgba(30, 100, 200);
+constexpr float kRound = 6;   // (corner radius in points: cells, boxes, buttons)
 constexpr int kDimAlpha = 185;   // (the game behind the menu)
 
 /// The unit: pixels per point. By the window's height and the Menu size (0 Auto, 1 Small, 2 Medium, 3 Large; Auto is Large
@@ -136,12 +140,18 @@ inline void flourish(Ctx& c, float x0, float x1, float y, ImU32 col) {
 inline void glow(Ctx& c, ImVec2 a0, ImVec2 b0) {
     const float s = c.s;
     for (int i = 6; i >= 1; i--)
-        c.d->AddRect(a0 - ImVec2(i * 1.5f * s, i * 1.5f * s), b0 + ImVec2(i * 1.5f * s, i * 1.5f * s), rgba(255, 244, 220, 12 + 4 * (6 - i)),
-                     2 * s, 2.2f * s);
-    c.d->AddRect(a0 - ImVec2(1.5f * s, 1.5f * s), b0 + ImVec2(1.5f * s, 1.5f * s), kInkBright, 2 * s, 3 * s);
+        c.d->AddRect(a0 - ImVec2(i * 1.5f * s, i * 1.5f * s), b0 + ImVec2(i * 1.5f * s, i * 1.5f * s), rgba(120, 200, 255, 12 + 5 * (6 - i)),
+                     (kRound + i * 1.5f) * s, 0, 2.2f * s);
+    c.d->AddRect(a0 - ImVec2(1.5f * s, 1.5f * s), b0 + ImVec2(1.5f * s, 1.5f * s), kInkBright, (kRound + 1.5f) * s, 0, 2.5f * s);
 }
-/// A gold fill, lighter at its top
-inline void gold(Ctx& c, ImVec2 a0, ImVec2 b0) { c.d->AddRectFilledMultiColor(a0, b0, kGoldHi, kGoldHi, kGold, kGold); }
+/// The selection's fill: electric blue, lighter at its top, rounded (the flat colours in the rounded corners, the gradient
+/// between them)
+inline void gold(Ctx& c, ImVec2 a0, ImVec2 b0) {
+    const float r = std::min(kRound * c.s, (b0.y - a0.y) * 0.5f);
+    c.d->AddRectFilled(a0, b0, kSelBot, r);
+    c.d->AddRectFilled(a0, ImVec2(b0.x, a0.y + 2 * r), kSelTop, r, ImDrawFlags_RoundCornersTop);
+    if (b0.y - a0.y > 2 * r) c.d->AddRectFilledMultiColor(ImVec2(a0.x, a0.y + r), ImVec2(b0.x, b0.y - r), kSelTop, kSelTop, kSelBot, kSelBot);
+}
 
 // ---- the button prompts: the keys, or a controller's buttons by position (any layout: the dot lit) ----
 enum Glyph { kUpDown, kLeftRight, kTabs, kConfirm, kBack, kKey };
@@ -153,7 +163,7 @@ struct Prompt {
 /// One glyph at p (its top left; the line px + 10 points high); its width. draw false: measured only
 inline float glyph(Ctx& c, float px, ImVec2 p, const Prompt& pr, bool draw) {
     const float s = c.s, hh = px + 10 * s, my = p.y + hh * 0.5f, kpx = px * 0.84f;
-    const ImU32 cap = kInk, ink = rgba(40, 30, 20), dim = rgba(150, 140, 126);
+    const ImU32 cap = kInk, ink = rgba(12, 20, 36), dim = rgba(128, 142, 164);
     auto key = [&](float x, const char* label) {   // (a key's cap, its label in it)
         const float w = label ? std::max(hh, size_of(c.f.strong, kpx, label).x + 14 * s) : hh;
         if (draw) {
@@ -242,27 +252,27 @@ inline float prompt_bar(Ctx& c, const Prompt* list, int n) {
     prompts(k, ImVec2(c.w - c.safe - pw - 10 * s, py + (ph - kh) * 0.5f), list, n, true);
     return py - 12 * s;
 }
-/// The tan banner across the top, hh pixels high, its dark lower edge
+/// The navy banner across the top, hh pixels high, a thin cyan line at its foot fading at both ends
 inline void banner(Ctx& c, float hh) {
-    const float s = c.s;
+    const float s = c.s, t = std::max(1.0f, 1.5f * s);
     c.d->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(c.w, hh), kBannerTop, kBannerTop, kBanner, kBanner);
-    c.d->AddRectFilled(ImVec2(0, hh - 3 * s), ImVec2(c.w, hh), kBannerEdge);
-    c.d->AddLine(ImVec2(0, hh - 4 * s), ImVec2(c.w, hh - 4 * s), rgba(226, 192, 138, 140), std::max(1.0f, s));
+    const ImU32 clear = alpha(kBannerEdge, 0);
+    c.d->AddRectFilledMultiColor(ImVec2(0, hh - t), ImVec2(c.w * 0.5f, hh), clear, kBannerEdge, kBannerEdge, clear);
+    c.d->AddRectFilledMultiColor(ImVec2(c.w * 0.5f, hh - t), ImVec2(c.w, hh), kBannerEdge, clear, clear, kBannerEdge);
 }
 /// A box (the help, the restart question): opaque, a fine edge, a soft shadow
 inline void box(Ctx& c, ImVec2 a, ImVec2 b) {
+    const float r = kRound * 1.5f * c.s;
     shadow(c, a, b, 18 * c.s, 0.8f, 4 * c.s);
-    c.d->AddRectFilled(a, b, kBox);
-    c.d->AddRect(a, b, kBoxEdge, 0, 1.5f * c.s);
+    c.d->AddRectFilled(a, b, kBox, r);
+    c.d->AddRect(a, b, kBoxEdge, r, 0, 1.5f * c.s);
 }
 /// A button as the game's pause menu draws its own: a warm cell with a fine inner frame; selected, gold with the outline
 inline void button(Ctx& c, ImVec2 a0, ImVec2 b0, const char* label, bool sel) {
     const float s = c.s;
     if (sel) gold(c, a0, b0);
-    else c.d->AddRectFilled(a0, b0, kCellName);
-    c.d->AddRect(a0 + ImVec2(4 * s, 4 * s), b0 - ImVec2(4 * s, 4 * s), sel ? rgba(36, 24, 8, 60) : rgba(190, 154, 98, 90), 0,
-                 std::max(1.0f, s));
-    c.d->AddRect(a0, b0, kBannerEdge, 0, std::max(1.0f, s));
+    else c.d->AddRectFilled(a0, b0, kCellName, kRound * s);
+    c.d->AddRect(a0, b0, sel ? alpha(kInkBright, 0.5f) : kEdge, kRound * s, 0, std::max(1.0f, s));
     ImFont* f = sel ? c.f.strong : c.f.body;
     text_mid_centre(c, f, 20 * s, (a0.x + b0.x) * 0.5f, (a0.y + b0.y) * 0.5f, sel ? kGoldInk : kInk, label);
     if (sel) glow(c, a0, b0);

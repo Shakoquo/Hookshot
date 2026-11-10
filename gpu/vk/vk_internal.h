@@ -117,6 +117,24 @@ BufferRef gpu_buffer(uint64_t gpu, uint64_t size);   // (empty when no pool hold
 /// imported pool. written: the GPU may write it (copied back to guest memory at the submission's end).
 BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written);
 BufferRef stream_copy(const void* src, uint64_t n);   // vk_draw.cpp: bytes in the recording's stream, as a binding
+// (Mako saccades) A read binding whose caller can copy the bytes instead (uniform and index buffers): when its 16 MB
+// chunk is not imported yet, the background thread imports it and the binding comes back empty for this draw, rather
+// than the replay thread stalling 5-30 ms in the driver while the player walks into new areas (RX_VK_IMPORT_DEFER=0: off).
+extern thread_local int tl_import_defer;
+// (what bound the range an on-demand import was made for, in its log line)
+extern thread_local const char* tl_bind_site;
+struct BindSite {
+    const char* prev;
+    int defer;
+    BindSite(const char* s, bool may_defer) : prev(tl_bind_site), defer(may_defer) {
+        tl_bind_site = s;
+        tl_import_defer += defer;
+    }
+    ~BindSite() {
+        tl_bind_site = prev;
+        tl_import_defer -= defer;
+    }
+};
 /// Changes when a read binding remembered earlier must be looked up again (a pool left, a mirror was made, a new submission)
 uint64_t gpu_bind_stamp();
 /// Around each submission's recording: mirrors wanted since the last one are made (begin), what the GPU wrote into

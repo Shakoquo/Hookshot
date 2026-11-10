@@ -67,6 +67,7 @@ struct Pool {
     bool inherit_pending = false;
     uint64_t retired_epoch = 0;
     bool prefetched = false;     // (amd-fix) imported ahead by the background thread, not bound yet
+    bool gpu_written = false;    // (Mako saccades) bound for a GPU write at some point (or took in a pool that was)
     // (hookshot) the write-back's diff: what guest memory holds of the pool, in VRAM, and the pages of it known to be so
     VkBuffer shadow = VK_NULL_HANDLE;
     VmaAllocation shadow_alloc = nullptr;
@@ -1750,6 +1751,12 @@ std::deque<std::pair<uint64_t, uint64_t>> bg_queue;
 std::vector<uint64_t> bg_inflight;           // (lo of the ranges queued or being imported)
 std::vector<std::pair<uint64_t, Pool>> bg_ready;
 int64_t st_bg_imports, st_bg_waits, st_prefetch_sent, st_prefetch_used, st_prefetch_dropped;
+int64_t st_defer_sent, st_defer_copies, st_defer_done, st_defer_dropped;
+std::set<uint64_t> deferred_once;   // (chunks sent to the thread for a deferred read; one dropped there is imported on demand)
+bool import_defer_on() {
+    static const bool on = !(getenv("RX_VK_IMPORT_DEFER") && atoi(getenv("RX_VK_IMPORT_DEFER")) == 0);
+    return on;
+}
 void bg_main();
 void bg_start() {   // (bg_mu held)
     static bool started;
@@ -1770,7 +1777,15 @@ void bg_main() {
             bg_queue.pop_front();
         }
         Pool p;
+        const auto t0 = std::chrono::steady_clock::now();
         const bool ok = import_pool(r.first, r.second, p);
+        {
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            static int logged;
+            if (ms >= 2.0 && logged++ < 100)
+                logf("vk: pool %#llx+%#llx imported in the background in %.1f ms%s", (unsigned long long)r.first,
+                     (unsigned long long)(r.second - r.first), ms, ok ? "" : " (failed)");
+        }
         std::lock_guard lk(bg_mu);
         p.prefetched = true;
         if (ok) bg_ready.push_back({r.first, p}), st_bg_imports++;
@@ -1790,12 +1805,15 @@ void bg_drain() {
     for (auto& [lo, p] : ready) {
         auto imp = imported.find(lo);
         if (imp != imported.end() && imp->second.hi >= p.hi) {
+            deferred_once.erase(lo);
             vkDestroyBuffer(dev.device, p.buffer, nullptr);
             vkFreeMemory(dev.device, p.memory, nullptr);
             for (VkDeviceMemory m : p.pieces) vkFreeMemory(dev.device, m, nullptr);
             continue;
         }
         bool overlap = false;   // (amd-fix: a chunk imported ahead that an import made since covers in part: the pools stay disjoint)
+        bool inside = true;     // (Mako saccades: every pool it overlaps lies within it)
+        std::vector<uint64_t> overlapped;
         for (auto o = imported.lower_bound(p.hi); o != imported.begin();) {
             --o;
             if (o == imp) continue;
@@ -1804,18 +1822,32 @@ void bg_drain() {
                 continue;
             }
             overlap = true;
-            break;
+            overlapped.push_back(o->first);
+            if (o->second.lo < p.lo || o->second.hi > p.hi) inside = false;
+        }
+        // (Mako saccades) a deferred read's import, made over the pools its range took in when it was sent (as an import
+        // on demand does): they are retired and it goes in, rather than being dropped, which sent a quarter of them back
+        // to the replay thread as imports on demand
+        if (overlap && inside && deferred_once.count(lo)) {
+            for (uint64_t k : overlapped) {
+                auto o = imported.find(k);
+                if (o != imported.end()) p.gpu_written |= o->second.gpu_written, retire_pool(o);
+            }
+            overlap = false;
+            imp = imported.find(lo);
         }
         if (overlap) {
             st_prefetch_dropped++;
+            if (deferred_once.count(lo)) st_defer_dropped++;   // (kept in the set: the next miss imports it on demand)
             vkDestroyBuffer(dev.device, p.buffer, nullptr);
             vkFreeMemory(dev.device, p.memory, nullptr);
             for (VkDeviceMemory m : p.pieces) vkFreeMemory(dev.device, m, nullptr);
             continue;
         }
-        if (imp != imported.end()) retire_pool(imp);
+        if (imp != imported.end()) p.gpu_written |= imp->second.gpu_written, retire_pool(imp);
         imported.emplace(lo, p);
         guest_pages_set(p.lo, p.hi, p.address);
+        if (deferred_once.erase(lo)) st_defer_done++;   // (in: a later miss of that chunk may be deferred again)
     }
 }
 
@@ -1915,6 +1947,60 @@ Pool* pool_lookup(uint64_t guest, uint64_t size) {
     const uint64_t want_lo = chunk ? range.lo / chunk * chunk : range.lo;
     const uint64_t want_hi = chunk ? (range.hi + chunk - 1) / chunk * chunk : range.hi;
     if (chunk && imp == imported.end()) imp = imported.find(want_lo);   // (a smaller one there: made again, larger)
+    // (Mako saccades) a read its caller can copy instead: the chunk goes to the background thread (or is already
+    // there), and this draw gets nothing from here. Not waited for. A chunk the thread made and had to drop (another
+    // import overlapped it since) is imported on demand at its next miss, as before.
+    // (only a range no imported pool holds any of: one the GPU may have written through a pool or its mirror in this
+    // submission is not read back from guest memory)
+    auto range_untouched = [&] {
+        for (auto o = imported.lower_bound(range.hi); o != imported.begin();) {
+            --o;
+            if (o->second.hi > range.lo && o->second.gpu_written) return false;
+            if (o->second.hi + (1ull << 30) < range.lo) break;
+        }
+        return true;
+    };
+    if (tl_import_defer > 0 && chunk && dev.external_memory_host && import_defer_on() &&
+        (imp == imported.end() || imp->second.hi < range.hi || imp->second.lo > range.lo) && range_untouched()) {
+        // (the range an import on demand would make: the chunks, grown over every imported pool they overlap)
+        uint64_t mlo = want_lo, mhi = std::max(want_hi, imp != imported.end() ? imp->second.hi : 0);
+        for (bool grew = true; grew;) {
+            grew = false;
+            for (auto o = imported.lower_bound(mhi); o != imported.begin();) {
+                --o;
+                if (o->second.hi <= mlo) {
+                    if (o->second.hi + (1ull << 30) < mlo) break;
+                    continue;
+                }
+                if (o->second.lo < mlo) mlo = o->second.lo, grew = true;
+                if (o->second.hi > mhi) mhi = o->second.hi, grew = true;
+            }
+        }
+        std::lock_guard lk(bg_mu);
+        bool busy = false;
+        for (const uint64_t x : bg_inflight)
+            if (x >= mlo && x < mhi) busy = true;
+        bool defer = busy;
+        if (!busy && !deferred_once.count(mlo) && mhi - mlo <= (256ull << 20)) {
+            deferred_once.insert(mlo);
+            bg_start();
+            bg_inflight.push_back(mlo);
+            bg_queue.push_back({mlo, mhi});
+            bg_cv.notify_one();
+            st_defer_sent++;
+            defer = true;
+        }
+        if (defer) {
+            static int64_t logged_at = -1;
+            if (++st_defer_copies / 256 != logged_at) {
+                logged_at = st_defer_copies / 256;
+                logf("vk: reads served by a copy while their chunk is imported in the background (%s): %lld; %lld chunks "
+                     "sent, %lld in, %lld dropped", tl_bind_site, (long long)st_defer_copies, (long long)st_defer_sent,
+                     (long long)st_defer_done, (long long)st_defer_dropped);
+            }
+            return nullptr;
+        }
+    }
     if (imp == imported.end() || imp->second.hi < range.hi) {   // (under way in the background: waited for)
         bool waited = false;
         {
@@ -1988,9 +2074,9 @@ Pool* pool_lookup(uint64_t guest, uint64_t size) {
             static int n, logged;
             total_ms += ms, n++;
             if ((ms >= 2.0 && logged++ < 200) || n % 256 == 0)
-                logf("vk: pool %#llx+%#llx imported in %.1f ms as %#llx..%#llx (%d imports, %.0f ms in all)",
+                logf("vk: pool %#llx+%#llx imported in %.1f ms as %#llx..%#llx (%d imports, %.0f ms in all; %s)",
                      (unsigned long long)range.lo, (unsigned long long)(range.hi - range.lo), ms, (unsigned long long)lo,
-                     (unsigned long long)hi, n, total_ms);
+                     (unsigned long long)hi, n, total_ms, tl_bind_site);
         }
         if (!ok) {
             if (!import_cooling && failures++ < 16) {
@@ -2005,7 +2091,7 @@ Pool* pool_lookup(uint64_t guest, uint64_t size) {
         }
         for (uint64_t k : overlapped) {   // (the pools it took in)
             auto o = imported.find(k);
-            if (o != imported.end()) retire_pool(o);
+            if (o != imported.end()) p.gpu_written |= o->second.gpu_written, retire_pool(o);
         }
         imp = imported.emplace(p.lo, p).first;
         guest_pages_set(p.lo, p.hi, p.address);
@@ -2610,6 +2696,9 @@ struct BindMemo {
 };
 thread_local BindMemo bind_memo[256];
 
+thread_local int tl_import_defer = 0;
+thread_local const char* tl_bind_site = "other";
+
 BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
     if (written) texture_gpu_wrote(gpu, size);
     // (below 1 TB a GPU address is the guest address itself, and a pool holds the whole range or nothing: the host's
@@ -2665,6 +2754,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
     Pool* p = pool_of(guest, size);
     if (!p) return {};
     tl = {p, pools_gen.load(std::memory_order_relaxed)};
+    if (written) p->gpu_written = true;   // (Mako saccades: a pool the GPU wrote is never imported over in the background)
     if (p->last_value < mem_rec_value) p->last_value = mem_rec_value;
     const uint64_t off = guest - p->lo;
     if (!mirror_on() || !mirror_upload || p->mstate == Pool::MIRROR_REFUSED) {

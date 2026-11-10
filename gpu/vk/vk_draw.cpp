@@ -2295,7 +2295,11 @@ VkDescriptorBufferInfo uniform_range(const NvnState& s, const Stage& st, uint32_
             }
         // (RX_VK_UB_SNAPSHOT=1: the contents as they are now, in the stream, not the pool the GPU reads later)
         static const bool snapshot = getenv("RX_VK_UB_SNAPSHOT") != nullptr;
-        BufferRef b = snapshot ? BufferRef{} : gpu_buffer_bind(u.addr, n, false);
+        BufferRef b;
+        if (!snapshot) {
+            BindSite site("uniform", true);
+            b = gpu_buffer_bind(u.addr, n, false);
+        }
         if (b && b.offset % align == 0) return {b.buffer, b.offset, n};
         const uint64_t at = stream_alloc(n, align);   // (unaligned or outside the pools: copied into the stream)
         if (at == UINT64_MAX) return bi;
@@ -2627,6 +2631,7 @@ void build_descriptors(const NvnState& s, const Program& p) {
                 // (hookshot) a storage buffer table's entries (count > 1, Info::global_tables): the ones past the table's
                 // end are whatever the constant buffer holds there, bound only when they look like a buffer
                 const bool plausible = d.count == 1 || (size && size <= (256ull << 20) && host->gpu_guest(base));
+                BindSite site_storage("storage", false);
                 BufferRef b = addr && plausible ? gpu_buffer_bind(base, n, d.is_written && !bare) : BufferRef{};
                 // (AyyBeeDee20738, PR 138) a table entry's region that does not fit its pool this moment bound nothing, and the next
                 // frame bound it again: its reads flipped between the data and 0, the picture between bright and dark. Smaller,
@@ -6182,8 +6187,21 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
             if (vertex_bind_reuse(vb_addr, vb_size, vb_stamp, kept_vb[b].addr, kept_vb[b].size, kept_vb[b].stamp, kept_vb[b].ok))
                 r = kept_vb[b].ref;
             else {
-                r = gpu_buffer_bind(vb_addr, vb_size, false);
-                kept_vb[b] = {vb_addr, vb_size, gpu_bind_stamp(), r, r ? 1 : 0};
+                // (Mako saccades: a stream with a known size whose chunk is not imported yet: copied for this draw while
+                // the background thread imports it; neither the copy nor the set it is in is kept for later draws)
+                const bool may_copy = s.vbuf[b].size && s.vbuf[b].size <= (4ull << 20);
+                bool copied = false;
+                {
+                    BindSite site("vertex", may_copy);
+                    r = gpu_buffer_bind(vb_addr, vb_size, false);
+                }
+                if (!r && may_copy) {
+                    const uint64_t at = stream_alloc(vb_size, 16);
+                    if (at != UINT64_MAX && memory_read_as_submitted(vb_addr, cur->mapped + at, vb_size))
+                        r = {cur->stream, at, vb_size}, copied = true;
+                }
+                kept_vb[b] = {vb_addr, vb_size, gpu_bind_stamp(), r, r && !copied ? 1 : 0};
+                if (copied) complete = false;
             }
             if (!r) {
                 complete = false;
@@ -6268,7 +6286,15 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         BufferRef ib;
         {
             FINE_SCOPE(FT_VERTEX);
-            ib = gpu_buffer_bind(d.ibuf, (uint64_t)std::max(d.count, 1) * unit, false);
+            const uint64_t ib_n = (uint64_t)std::max(d.count, 1) * unit;
+            {
+                BindSite site("index", true);
+                ib = gpu_buffer_bind(d.ibuf, ib_n, false);
+            }
+            if (!ib && ib_n <= (8ull << 20)) {   // (Mako saccades: its chunk on its way in: the indices copied for this draw)
+                const uint64_t at = stream_alloc(ib_n, 16);
+                if (at != UINT64_MAX && memory_read_as_submitted(d.ibuf, cur->mapped + at, ib_n)) ib = {cur->stream, at, ib_n};
+            }
             if (!ib) SKIP_HERE();
             FINE_N(FC_IBIND, 1);
             bind_index(cmd, ib.buffer, ib.offset, itype);

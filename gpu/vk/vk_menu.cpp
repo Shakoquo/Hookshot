@@ -1403,17 +1403,17 @@ void columns(const ui::Ctx& c, float* x0, float* x1, float* hx0, float* hx1, boo
 void column(ui::Ctx& c, float x0, float x1, float top) {
     const float s = c.s;
     c.d->AddRectFilled(ImVec2(x0, top), ImVec2(x1, c.h), ui::kColumn);
-    c.d->AddLine(ImVec2(x0, top), ImVec2(x0, c.h), ui::alpha(ui::kEdge, 1), 2 * s);
-    c.d->AddLine(ImVec2(x1, top), ImVec2(x1, c.h), ui::alpha(ui::kEdge, 1), 2 * s);
+    c.d->AddLine(ImVec2(x0, top), ImVec2(x0, c.h), ui::alpha(ui::kEdge, 0.7f), std::max(1.0f, s));
+    c.d->AddLine(ImVec2(x1, top), ImVec2(x1, c.h), ui::alpha(ui::kEdge, 0.7f), std::max(1.0f, s));
 }
 /// A row's name cell, selected or not, its tag (After restart) at its right end
 /// A row's name cell, selected or not; pending: a change that applies after a restart, a small gold diamond at its right end
 /// (the help says it in words)
 void name_cell(ui::Ctx& c, ImVec2 a, ImVec2 b, const char* name, bool sel, bool pending = false, float px = 18.5f) {
     const float s = c.s, mid = (a.y + b.y) * 0.5f;
-    c.d->AddRectFilled(a, b, sel ? ui::kCellNameSel : ui::kCellName);
-    c.d->AddRect(a, b, ui::kEdge, 0, std::max(1.0f, s));
-    if (sel) c.d->AddRectFilled(a, ImVec2(a.x + 4 * s, b.y), ui::kGoldHi);
+    c.d->AddRectFilled(a, b, sel ? ui::kCellNameSel : ui::kCellName, ui::kRound * s);
+    c.d->AddRect(a, b, ui::kEdge, ui::kRound * s, 0, std::max(1.0f, s));
+    if (sel) c.d->AddRectFilled(ImVec2(a.x + 3 * s, a.y + 7 * s), ImVec2(a.x + 7 * s, b.y - 7 * s), ui::kAccent, 2 * s);
     float room = b.x - a.x - 36 * s;
     if (pending) {
         ui::diamond(c, ImVec2(b.x - 12 * s, mid), 4 * s, ui::kGoldHi);
@@ -1426,8 +1426,8 @@ void name_cell(ui::Ctx& c, ImVec2 a, ImVec2 b, const char* name, bool sel, bool 
 /// A value cell: a choice with arrows at its ends (left, right: whether it can go that way), gold when selected
 void choice_cell(ui::Ctx& c, ImVec2 a, ImVec2 b, const std::string& value, bool sel, bool left, bool right, bool fixed = false) {
     const float s = c.s, mid = (a.y + b.y) * 0.5f, in = 4 * s, px = 18 * s;
-    c.d->AddRectFilled(a, b, ui::kCellDark);
-    c.d->AddRect(a, b, ui::kEdge, 0, std::max(1.0f, s));
+    c.d->AddRectFilled(a, b, ui::kCellDark, ui::kRound * s);
+    c.d->AddRect(a, b, ui::kEdge, ui::kRound * s, 0, std::max(1.0f, s));
     if (sel && !fixed) ui::gold(c, a + ImVec2(in, in), b - ImVec2(in, in));
     const ImU32 ink = sel && !fixed ? ui::kGoldInk : fixed ? ui::kDim : ui::kInk, arrow = sel && !fixed ? ui::kGoldInk : ui::kDim;
     if (left) ui::triangle(c, ImVec2(a.x + in + 11 * s, mid), 9 * s, 0, arrow);
@@ -1440,11 +1440,11 @@ void choice_cell(ui::Ctx& c, ImVec2 a, ImVec2 b, const std::string& value, bool 
 /// A value cell of two halves (a row of two values: On and Off), the chosen one filled
 void halves_cell(ui::Ctx& c, ImVec2 a, ImVec2 b, const char* lo, const char* hi, bool high, bool sel, bool fixed) {
     const float s = c.s, mid = (a.y + b.y) * 0.5f, in = 4 * s, px = 18 * s, xm = (a.x + b.x) * 0.5f;
-    c.d->AddRectFilled(a, b, ui::kCellDark);
-    c.d->AddRect(a, b, ui::kEdge, 0, std::max(1.0f, s));
+    c.d->AddRectFilled(a, b, ui::kCellDark, ui::kRound * s);
+    c.d->AddRect(a, b, ui::kEdge, ui::kRound * s, 0, std::max(1.0f, s));
     const ImVec2 fa = high ? ImVec2(xm, a.y + in) : a + ImVec2(in, in), fb = high ? b - ImVec2(in, in) : ImVec2(xm, b.y - in);
     if (sel && !fixed) ui::gold(c, fa, fb);
-    else c.d->AddRectFilled(fa, fb, ui::kBronze);
+    else c.d->AddRectFilled(fa, fb, ui::kBronze, (ui::kRound - 2) * s);
     const ImU32 on = sel && !fixed ? ui::kGoldInk : ui::kInk;
     ui::text_mid_centre(c, high ? c.f.body : c.f.strong, px, (a.x + xm) * 0.5f, mid, high ? ui::kDim : on, lo);
     ui::text_mid_centre(c, high ? c.f.strong : c.f.body, px, (xm + b.x) * 0.5f, mid, high ? on : ui::kDim, hi);
@@ -1453,14 +1453,14 @@ void halves_cell(ui::Ctx& c, ImVec2 a, ImVec2 b, const char* lo, const char* hi,
 /// A slider's value cell: the value, a track with its knob along the cell's foot; *t0, *t1 the track (for the mouse)
 void slider_cell(ui::Ctx& c, ImVec2 a, ImVec2 b, const char* value, int permille, bool sel, float* t0, float* t1) {
     const float s = c.s, mid = (a.y + b.y) * 0.5f, in = 4 * s, px = 18 * s;
-    c.d->AddRectFilled(a, b, ui::kCellDark);
-    c.d->AddRect(a, b, ui::kEdge, 0, std::max(1.0f, s));
+    c.d->AddRectFilled(a, b, ui::kCellDark, ui::kRound * s);
+    c.d->AddRect(a, b, ui::kEdge, ui::kRound * s, 0, std::max(1.0f, s));
     if (sel) ui::gold(c, a + ImVec2(in, in), b - ImVec2(in, in));
     const float x0 = a.x + in + 24 * s, x1 = b.x - in - 24 * s, xv = x0 + (x1 - x0) * permille / 1000.0f, ty = b.y - in - 5.5f * s;
-    const ImU32 track = sel ? ui::rgba(36, 24, 8, 80) : ui::rgba(255, 255, 255, 40), done = sel ? ui::kGoldInk : ui::kAccent;
+    const ImU32 track = sel ? ui::rgba(255, 255, 255, 70) : ui::rgba(255, 255, 255, 40), done = sel ? ui::kGoldInk : ui::kAccent;
     c.d->AddRectFilled(ImVec2(x0, ty - 1.5f * s), ImVec2(x1, ty + 1.5f * s), track, 1.5f * s);
     c.d->AddRectFilled(ImVec2(x0, ty - 1.5f * s), ImVec2(xv, ty + 1.5f * s), done, 1.5f * s);
-    ui::diamond(c, ImVec2(xv, ty), 4.5f * s, done);
+    c.d->AddCircleFilled(ImVec2(xv, ty), 4.5f * s, done);
     ui::text_mid_centre(c, c.f.strong, px, (a.x + b.x) * 0.5f, mid - 3 * s, sel ? ui::kGoldInk : ui::kInk, value);
     const ImU32 arrow = sel ? ui::kGoldInk : ui::kDim;
     ui::triangle(c, ImVec2(a.x + in + 11 * s, mid), 9 * s, 0, arrow), ui::triangle(c, ImVec2(b.x - in - 11 * s, mid), 9 * s, 1, arrow);
@@ -1497,29 +1497,27 @@ void draw_options(ui::Ctx& c) {
     for (int i = 0; i < 2; i++) {
         const float cw = 26 * s, cx = i ? x + total + 22 * s : x - 22 * s - cw;
         const bool hover = hover_tab == TAB_COUNT + i;
-        c.d->AddRectFilled(ImVec2(cx, ty - 13 * s), ImVec2(cx + cw, ty + 13 * s), hover ? ui::kTabInset : ui::kBannerInk, 3 * s);
+        c.d->AddRectFilled(ImVec2(cx, ty - 13 * s), ImVec2(cx + cw, ty + 13 * s), hover ? ui::kTabInset : ui::kChip, 4 * s);
         ui::text_mid_centre(c, c.f.strong, 14 * s, cx + cw * 0.5f, ty, ui::kInk, keys[i]);
         hits.add(i ? cx - 10 * s : 0, 0, i ? c.w : cx + cw + 10 * s, hh, i ? menu_hit::kTabNext : menu_hit::kTabPrev, -1);
     }
     for (int i = 0; i < TAB_COUNT; i++) {
         const bool shown = i == (cur_tab == TAB_MOTION ? TAB_CONTROLS : cur_tab);   // (the Motion page: under Controls)
         if (shown || i == hover_tab) {
-            c.d->AddRectFilled(ImVec2(x, 0), ImVec2(x + tw[i], hh - 3 * s), shown ? ui::kTabInset : ui::alpha(ui::kTabInset, 0.35f));
-            if (shown) {
-                c.d->AddLine(ImVec2(x + 1, 0), ImVec2(x + 1, hh - 3 * s), ui::rgba(52, 34, 16), std::max(1.0f, s));
-                c.d->AddLine(ImVec2(x + tw[i] - 1, 0), ImVec2(x + tw[i] - 1, hh - 3 * s), ui::rgba(52, 34, 16), std::max(1.0f, s));
-            }
+            const ImU32 foot = shown ? ui::kTabInset : ui::alpha(ui::kTabInset, 0.45f), clear = ui::alpha(ui::kTabInset, 0);
+            c.d->AddRectFilledMultiColor(ImVec2(x, 0), ImVec2(x + tw[i], hh), clear, clear, foot, foot);
+            if (shown) c.d->AddRectFilled(ImVec2(x + 14 * s, hh - 4 * s), ImVec2(x + tw[i] - 14 * s, hh), ui::kAccent, 2 * s);   // (a cyan bar under it)
         }
-        ui::text_mid(c, c.f.heading, 23 * s, x + 28 * s, ty, shown ? ui::kInkBright : ui::kBannerInk, tab_titles[i]);
+        ui::text_mid(c, c.f.heading, 23 * s, x + 28 * s, ty, shown ? ui::kInkBright : ui::kSoft, tab_titles[i]);
         hits.add(x, 0, x + tw[i], hh, menu_hit::kTab, i);
         x += tw[i];
     }
     {   // (which build, at the banner's left, so a report can say it without opening the log; the release alone when the whole
         // line would run into the tabs)
-        std::string ver = std::string("Hookshot ") + HOOKSHOT_VERSION;
+        std::string ver = std::string("Mako ") + HOOKSHOT_VERSION;
         const float room = (c.w - total) * 0.5f - 60 * s - c.safe;
         if (ui::size_of(c.f.body, 15 * s, ver.c_str()).x > room && ver.find(" (") != std::string::npos) ver.resize(ver.find(" ("));
-        if (ui::size_of(c.f.body, 15 * s, ver.c_str()).x <= room) ui::text_mid(c, c.f.body, 15 * s, c.safe, ty, ui::kBannerInk, ver.c_str());
+        if (ui::size_of(c.f.body, 15 * s, ver.c_str()).x <= room) ui::text_mid(c, c.f.body, 15 * s, c.safe, ty, ui::kDim, ver.c_str());
     }
     // the rows, in the column; the help beside it
     float cx0, cx1, hx0, hx1;
@@ -1781,11 +1779,11 @@ void draw_ask(ui::Ctx& c) {
     const float s = c.s, W = 560 * s, H = 232 * s;
     const ImVec2 p((c.w - W) * 0.5f, (c.h - H) * 0.5f), q = p + ImVec2(W, H);
     ui::shadow(c, p, q, 30 * s, 1.0f, 8 * s);
-    c.d->AddRectFilled(p, q, ui::rgba(36, 28, 19, 250));
-    c.d->AddRect(p, q, ui::rgba(122, 98, 64, 230), 0, 2 * s);
-    const float hb = 50 * s;   // (a tan title strip, as the banner, its title in dark ink)
-    c.d->AddRectFilledMultiColor(p, ImVec2(q.x, p.y + hb), ui::kBannerTop, ui::kBannerTop, ui::kBanner, ui::kBanner);
-    c.d->AddRectFilled(ImVec2(p.x, p.y + hb - 3 * s), ImVec2(q.x, p.y + hb), ui::kBannerEdge);
+    const float hb = 50 * s, rr = ui::kRound * 1.5f * s;   // (a navy title strip, as the banner, a cyan line under it)
+    c.d->AddRectFilled(p, q, ui::kBox, rr);
+    c.d->AddRectFilled(p, ImVec2(q.x, p.y + hb), ui::kBannerTop, rr, ImDrawFlags_RoundCornersTop);
+    c.d->AddRectFilled(ImVec2(p.x + 24 * s, p.y + hb - 2 * s), ImVec2(q.x - 24 * s, p.y + hb), ui::kAccent, s);
+    c.d->AddRect(p, q, ui::kBoxEdge, rr, 0, 1.5f * s);
     ui::text_mid_centre(c, c.f.heading, 23 * s, (p.x + q.x) * 0.5f, p.y + hb * 0.5f, ui::kBannerInk, "Restart Needed");
     const std::string ask = "Restart to apply " + restart_list(" and ") + "?";
     ui::para(c, c.f.body, 19 * s, ImVec2(p.x + 28 * s, p.y + 64 * s), ui::kInk, ask.c_str(), W - 56 * s);
@@ -1856,7 +1854,7 @@ float menu_ox = 0;   // (the menu's column's left edge in the window: more than 
 /// middle (a window of 16:9 or narrower: the whole of it). The pages draw from 0 as on 16:9; their vertices and clip
 /// rectangles are moved over after, and menu_tick moves the mouse back by menu_ox before it tests the hits
 void draw_menu(ui::Ctx& c) {
-    c.d->AddRectFilled(ImVec2(0, 0), ImVec2(c.w, c.h), ui::rgba(8, 5, 2, ui::kDimAlpha));   // (the game behind, dimmed)
+    c.d->AddRectFilled(ImVec2(0, 0), ImVec2(c.w, c.h), ui::rgba(2, 5, 12, ui::kDimAlpha));   // (the game behind, dimmed)
     ui::Ctx k = c;
     k.w = std::min(c.w, std::floor(c.h * 16.0f / 9.0f + 0.5f));
     menu_ox = std::floor((c.w - k.w) * 0.5f);
@@ -1887,9 +1885,9 @@ void draw_fps(ui::Ctx& c, bool under_banner) {
     // much wider than 16:9 that the plate fits beside the centred column's banner, in the corner)
     const bool beside = menu_ox >= bw + 2 * c.safe;
     const ImVec2 a(c.w - c.safe - bw, under_banner && page != 5 && !beside ? banner_h(c) + 10 * s : c.safe), b = a + ImVec2(bw, bh);
-    c.d->AddRectFilled(a, b, ui::rgba(30, 23, 15, 236));
-    c.d->AddRect(a, b, ui::kBoxEdge, 0, std::max(1.0f, s));
-    ui::text_mid(c, c.f.heading, px, a.x + 12 * s, a.y + 17 * s, ui::rgba(246, 236, 214), fps_text);
+    c.d->AddRectFilled(a, b, ui::rgba(10, 16, 30, 236), ui::kRound * s);
+    c.d->AddRect(a, b, ui::kBoxEdge, ui::kRound * s, 0, std::max(1.0f, s));
+    ui::text_mid(c, c.f.heading, px, a.x + 12 * s, a.y + 17 * s, ui::kInkBright, fps_text);
     ui::text_mid(c, c.f.strong, 12 * s, a.x + 17 * s + nw, a.y + 17 * s, ui::kAccent, "FPS");
     if (fps_sub[0]) ui::text_mid(c, c.f.body, 12.5f * s, a.x + 12 * s, a.y + 37 * s, ui::kSoft, fps_sub);
 }
@@ -1903,11 +1901,11 @@ void draw_perf(ui::Ctx& c) {
     float y = c.safe + 60 * s;
     for (int i = 0; i < n; i++, y += rh + gap) {
         const ImVec2 a(c.safe, y), b(c.safe + w, y + rh);
-        c.d->AddRectFilled(a, b, ui::rgba(30, 23, 15, 226));
-        c.d->AddRect(a, b, ui::kBoxEdge, 0, std::max(1.0f, s));
-        c.d->AddRectFilled(a, ImVec2(a.x + 4 * s, b.y), ui::kAccent);
+        c.d->AddRectFilled(a, b, ui::rgba(10, 16, 30, 226), ui::kRound * s);
+        c.d->AddRect(a, b, ui::kBoxEdge, ui::kRound * s, 0, std::max(1.0f, s));
+        c.d->AddRectFilled(ImVec2(a.x + 3 * s, a.y + 6 * s), ImVec2(a.x + 6 * s, b.y - 6 * s), ui::kAccent, 1.5f * s);
         ui::text_mid(c, c.f.body, 12.5f * s, a.x + 12 * s, a.y + rh * 0.5f, ui::kSoft, labels[i]);
-        ui::text_mid_right(c, c.f.strong, 13.5f * s, b.x - 10 * s, a.y + rh * 0.5f, ui::rgba(246, 236, 214), values[i]);
+        ui::text_mid_right(c, c.f.strong, 13.5f * s, b.x - 10 * s, a.y + rh * 0.5f, ui::kInkBright, values[i]);
     }
 }
 
@@ -1920,15 +1918,20 @@ void draw_startup(ui::Ctx& c) {
         v = startup;
     }
     const float s = c.s, w = c.w, h = c.h, cx = w * 0.5f, k = s * 0.86f;   // (k: the scale of what is under the logo)
-    c.d->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), ui::rgba(14, 10, 6));
+    c.d->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), ui::rgba(5, 9, 18));
     const float lh = 112 * s, top = h * 0.5f - 176 * s;
-    for (int i = 40; i >= 1; i--) c.d->AddCircleFilled(ImVec2(cx, top + lh * 0.5f + 70 * s), h * 0.021f * i, ui::rgba(46, 33, 18, 4), 128);
+    for (int i = 40; i >= 1; i--) c.d->AddCircleFilled(ImVec2(cx, top + lh * 0.5f + 70 * s), h * 0.021f * i, ui::rgba(20, 60, 120, 4), 128);
     float aspect = 1;
     ImTextureData* logo = ui::logo(&aspect);
     if (logo) c.d->AddImage(logo->GetTexRef(), ImVec2(cx - lh * aspect * 0.5f, top), ImVec2(cx + lh * aspect * 0.5f, top + lh));
     float y = top + lh + 16 * s;
-    ui::spaced(c, c.f.heading, 42 * k, ImVec2(cx, y), ui::rgba(246, 232, 204), "HOOKSHOT", 6 * k);
-    ui::flourish(c, cx - 190 * k, cx + 190 * k, y + 66 * k, ui::kAccent);
+    ui::spaced(c, c.f.heading, 42 * k, ImVec2(cx, y), ui::kInkBright, "MAKO", 14 * k);
+    {   // (a thin cyan line under the wordmark, fading at its ends)
+        const float ly = y + 66 * k, t = std::max(1.0f, 1.5f * k);
+        const ImU32 a0 = ui::alpha(ui::kAccent, 0);
+        c.d->AddRectFilledMultiColor(ImVec2(cx - 150 * k, ly), ImVec2(cx, ly + t), a0, ui::kAccent, ui::kAccent, a0);
+        c.d->AddRectFilledMultiColor(ImVec2(cx, ly), ImVec2(cx + 150 * k, ly + t), ui::kAccent, a0, a0, ui::kAccent);
+    }
     ui::text_centre(c, c.f.body, 14.5f * k, ImVec2(cx, y + 78 * k), ui::kDim, v.version.c_str());
     if (!v.title.empty()) {
         y += 120 * k;
@@ -1942,8 +1945,8 @@ void draw_startup(ui::Ctx& c) {
         float under = by;
         if (v.fraction >= 0) {   // (the bar as a value cell: a dark cell, gold inside, the percentage on it)
             const float bh = 26 * k, in = 4 * k, fx = x0 + in + (x1 - x0 - 2 * in) * (float)std::min(v.fraction, 1.0);
-            c.d->AddRectFilled(ImVec2(x0, by), ImVec2(x1, by + bh), ui::kCellDark);
-            c.d->AddRect(ImVec2(x0, by), ImVec2(x1, by + bh), ui::kEdge, 0, std::max(1.0f, s));
+            c.d->AddRectFilled(ImVec2(x0, by), ImVec2(x1, by + bh), ui::kCellDark, ui::kRound * k);
+            c.d->AddRect(ImVec2(x0, by), ImVec2(x1, by + bh), ui::kEdge, ui::kRound * k, 0, std::max(1.0f, s));
             if (fx > x0 + in) ui::gold(c, ImVec2(x0 + in, by + in), ImVec2(fx, by + bh - in));
             // (the percentage in the middle of the whole bar, drawn twice: dark ink where the gold is under it, light where the
             // empty bar is, each clipped to its part, so every letter keeps its contrast as the edge passes through it)
