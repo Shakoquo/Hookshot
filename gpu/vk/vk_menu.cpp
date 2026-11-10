@@ -1519,7 +1519,8 @@ void draw_options(ui::Ctx& c) {
     }
     {   // (which build, at the banner's left, so a report can say it without opening the log; the release alone when the whole
         // line would run into the tabs)
-        std::string ver = std::string("Mako ") + HOOKSHOT_VERSION;
+        std::string ver = HOOKSHOT_VERSION;   // (Mako: "mako-3.3 (source ...)" shown as "Mako 3.3 (source ...)")
+        if (ver.rfind("mako-", 0) == 0) ver = "Mako " + ver.substr(5);
         const float room = (c.w - total) * 0.5f - 60 * s - c.safe;
         if (ui::size_of(c.f.body, 15 * s, ver.c_str()).x > room && ver.find(" (") != std::string::npos) ver.resize(ver.find(" ("));
         if (ui::size_of(c.f.body, 15 * s, ver.c_str()).x <= room) ui::text_mid(c, c.f.body, 15 * s, c.safe, ty, ui::kDim, ver.c_str());
