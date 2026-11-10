@@ -29,9 +29,9 @@ static class Fork {
     public const string Base = "mako-3.0";      // (host/hos_update.c HOOKSHOT_FORK_BASE: the exe this launcher ships with)
     public const string Version = "mako-3.0.2"; // (HOOKSHOT_FORK_VERSION)
     public const int Api = 7;                   // (gpu/vk/vk_api.h MKWVK_API_VERSION)
-    public const string Api_Url = "https://api.github.com/repos/Shakoquo/Hookshot/releases/latest";
-    public const string Page = "https://github.com/Shakoquo/Hookshot/releases/latest";
-    public const string Home = "https://github.com/Shakoquo/Hookshot";
+    public const string Api_Url = "https://api.github.com/repos/Shakoquo/Mako/releases/latest";
+    public const string Page = "https://github.com/Shakoquo/Mako/releases/latest";
+    public const string Home = "https://github.com/Shakoquo/Mako";
     public const string GameExe = "hookshot.exe";
     public static string Shown(string v) { var m = Regex.Match(v ?? "", @"\d+(\.\d+)*"); return m.Success ? "v" + m.Value : v; }
 }
@@ -918,9 +918,10 @@ class LauncherForm : Form {
                     string manifest = null;
                     foreach (Match a in Regex.Matches(json, "\"browser_download_url\"\\s*:\\s*\"([^\"]+)\"")) {
                         string u = a.Groups[1].Value;
-                        if (u.EndsWith("/hookshot_vk_update.txt")) manifest = u;
-                        if (u.EndsWith("/hookshot_vk.dll")) dll = u;
-                        if (u.EndsWith("/HookshotBuilder.zip")) zip = u;
+                        // (Mako 3.3: the new names first; the old ones are what releases up to 3.0.2 have)
+                        if (u.EndsWith("/mako_vk_update.txt") || (manifest == null && u.EndsWith("/hookshot_vk_update.txt"))) manifest = u;
+                        if (u.EndsWith("/mako_vk.dll") || (dll == null && u.EndsWith("/hookshot_vk.dll"))) dll = u;
+                        if (u.EndsWith("/MakoBuilder.zip") || (zip == null && u.EndsWith("/HookshotBuilder.zip"))) zip = u;
                     }
                     if (zip != null) {
                         var zm = Regex.Match(json, "\"size\"\\s*:\\s*(\\d+)[^{}]*?\"browser_download_url\"\\s*:\\s*\"" + Regex.Escape(zip) + "\"");
