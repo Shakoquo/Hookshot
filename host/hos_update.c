@@ -310,13 +310,6 @@ static int read_value(const char *path, const char *name, char *out, size_t cap)
     return found;
 }
 
-static int safe_tag(const char *s) {
-    size_t n = strlen(s);
-    if (!n || n > 80) return 0;
-    for (size_t i = 0; i < n; i++)
-        if (!isalnum((unsigned char)s[i]) && !strchr("._+-", s[i])) return 0;
-    return 1;
-}
 
 static int pipe_tag(const char *cmd, char *tag, size_t cap) {
     FILE *p = popen(cmd, "r");

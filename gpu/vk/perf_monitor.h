@@ -14,9 +14,7 @@ void perf_monitor_note_gpu_time(uint64_t ns);
 // Samples process/GPU memory and rolling frame statistics. True when the displayed values changed.
 bool perf_monitor_sample();
 
-// Red left-side rectangle overlay. The caller owns the bitmap/upload path.
-uint32_t perf_monitor_width(int scale);
-uint32_t perf_monitor_height(int scale);
-void perf_monitor_paint(HDC dc, uint32_t w, uint32_t h, int scale);
+// The rows shown (labels and values, 6 of them; values 40 bytes each): drawn by vk_menu.cpp draw_perf
+int perf_monitor_rows(const char* labels[], char values[][40]);
 
 } // namespace mkwvk
