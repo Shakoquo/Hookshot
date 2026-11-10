@@ -47,9 +47,12 @@ int main(int argc, char **argv) {
     assert(output_mode() == mode);
     assert(hos_output_size(0) == w && hos_output_size(1) == h);
     assert(hos_rt_pool_size(305ull << 20) == ((mode == 2 ? 687ull : mode == 4 ? 610ull : 512ull) << 20));   // (512 MB at least: nn_applet.c)
-    assert(kLastOutput == 4);
-    assert(output_choice(-1) == 0 && output_choice(4) == 4 && output_choice(5) == 0);
-    assert(step_output_choice(3, -1) == 3);
+    assert(kLastOutput == 6);
+    assert(output_choice(-1) == 0 && output_choice(6) == 6 && output_choice(7) == 0);
+    // (smallest to largest: 6 1280x720, 5 1600x900, 3, 0, 1, 2, 4)
+    assert(step_output_choice(6, -1) == 6 && step_output_choice(6, 1) == 5);
+    assert(step_output_choice(5, -1) == 6 && step_output_choice(5, 1) == 3);
+    assert(step_output_choice(3, -1) == 5);
     assert(step_output_choice(3, 1) == 0 && step_output_choice(0, -1) == 3);
     assert(step_output_choice(0, 1) == 1 && step_output_choice(1, -1) == 0);
     assert(step_output_choice(1, 1) == 2 && step_output_choice(2, -1) == 1);
@@ -83,9 +86,11 @@ int main(int argc, char **argv) {
         (2, 0, None, 2, 3840, 2160, "3840x2160"),
         (3, 0, None, 3, 1920, 1080, "1920x1080"),
         (1, 0, "3", 3, 1920, 1080, "1920x1080"),
+        (5, 0, None, 5, 1600, 900, "1600x900"),
+        (6, 0, None, 6, 1280, 720, "1280x720"),
         (3, 1, "3", 0, 2560, 1440, "2048x1152 (game's)"),
         (4, 1, None, 0, 2560, 1440, "2048x1152 (game's)"),
-        (5, 0, None, 0, 2560, 1440, "2048x1152 (game's)"),
+        (7, 0, None, 0, 2560, 1440, "2048x1152 (game's)"),
         (4, 0, None, 4, 5120, 1440, "5120x1440"),
     )
     with tempfile.TemporaryDirectory(prefix="output-resolution-") as tmp:
