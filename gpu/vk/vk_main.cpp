@@ -599,7 +599,8 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     if (result != VK_SUCCESS || modes.empty())
         logf("vk: querying present modes failed (VkResult %d, count %u); trying mandatory FIFO mode", (int)result, n);
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
-    const bool force_fifo = getenv("RX_VK_FIFO") != nullptr;   // (as on a card or driver with vsync forced)
+    // (as on a card or driver with vsync forced; Mako: the Insert menu's VSync row the same)
+    const bool force_fifo = getenv("RX_VK_FIFO") != nullptr || opts.vsync;
     if (!force_fifo) {
         for (auto m : modes)
             if (m == VK_PRESENT_MODE_MAILBOX_KHR) mode = m;

@@ -357,16 +357,18 @@ class LauncherForm : Form {
             "AMD graphics cards: less delay between your button and the screen. Has no effect while frame generation is on." },
         new object[] { "frame_pacing", "Frame pacing", new[] { "Off", "On" }, new[] { 0, 1 },
             "Spaces the frames evenly: steadier motion." },
+        new object[] { "vsync", "VSync", new[] { "Off", "On" }, new[] { 0, 1 },
+            "Waits for your screen before showing each frame: no tearing, at a little more delay." },
         new object[] { "fullscreen", "Display", new[] { "Window", "Fullscreen" }, new[] { 0, 1 },
             "Play in a window or full screen. Alt+Enter switches in game." },
         new object[] { "ultrawide", "Screen shape", new[] { "16:9", "Monitor's shape" }, new[] { 0, 1 },
             "Monitor's shape widens the camera to fill a screen wider than 16:9." },
         new object[] { "handheld_profile", "Handheld profile", new[] { "Off", "On" }, new[] { 0, 1 },
             "Runs the game as if the console were undocked: lower resolutions, lighter on the graphics card." },
-        new object[] { "fps_counter", "FPS counter", new[] { "Off", "On" }, new[] { 0, 1 },
-            "Shows the frames per second in a corner of the screen." },
     };
     static readonly object[][] GameRows = {
+        new object[] { "fps_counter", "FPS counter", new[] { "Off", "On" }, new[] { 0, 1 },
+            "Shows the frames per second in a corner of the screen." },
         new object[] { "game_speed", "Game speed", new[] { "Per frame", "Real time" }, new[] { 0, 1 },
             "Real time keeps the game at its normal speed even when the frame rate drops." },
         new object[] { "text_speed", "Text speed", new[] { "Normal", "2x", "4x", "Instant" }, new[] { 0, 1, 2, 3 },
@@ -758,7 +760,7 @@ class LauncherForm : Form {
         var o = ReadOptions();
         // (the game's own defaults where the file has nothing yet: options.ini is written by the game's Insert menu)
         var defaults = new Dictionary<string, int> { { "quality_preset", 0 }, { "output_res", 0 }, { "resolution", 0 }, { "upscaling", 2 }, { "sharpness", 30 },
-            { "frame_generation", 2 }, { "frame_pacing", 1 }, { "fullscreen", 1 }, { "ultrawide", 0 }, { "handheld_profile", 0 },
+            { "frame_generation", 2 }, { "frame_pacing", 1 }, { "vsync", 0 }, { "fullscreen", 1 }, { "ultrawide", 0 }, { "handheld_profile", 0 },
             { "fps_counter", 0 }, { "dlss", 0 }, { "frame_rate_cap", 0 }, { "amd_anti-lag_2", 0 }, { "game_speed", 1 }, { "text_speed", 0 }, { "controller_in_background", 0 } };
         foreach (var kv in defaults) SetSetting(kv.Key, o.ContainsKey(kv.Key) ? o[kv.Key] : kv.Value);
         var env = ReadEnv();

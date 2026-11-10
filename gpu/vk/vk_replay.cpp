@@ -3452,8 +3452,11 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
     static int hdr_was = -1;   // (the Insert menu's HDR as the swapchain was made for it; -1: not yet looked at)
     const bool hdr_changed = hdr_was >= 0 && hdr_was != opts.hdr;   // (turned on or off: the swapchain's format)
     if (hdr_was < 0) hdr_was = opts.hdr;
+    static int vsync_was = -1;   // (Mako: the VSync row as the swapchain was made for it: its present mode)
+    const bool vsync_changed = vsync_was >= 0 && vsync_was != opts.vsync;
+    if (vsync_was < 0) vsync_was = opts.vsync;
     const uint64_t want = dev.swap_resize.exchange(0, std::memory_order_acquire);
-    if (want || !dev.swapchain || reflex_swapchain_stale() || hdr_changed) {   // (resized, gone, Reflex or HDR changed)
+    if (want || !dev.swapchain || reflex_swapchain_stale() || hdr_changed || vsync_changed) {   // (resized, gone, Reflex, HDR or VSync changed)
         std::lock_guard qk(dev.present_mu);
         const uint32_t width = want ? (uint32_t)(want >> 32) : dev.swap_extent.width;
         const uint32_t height = want ? (uint32_t)want : dev.swap_extent.height;
@@ -3465,6 +3468,7 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
             return;   // (the old swapchain may already be retired; do not acquire or reset a frame fence)
         }
         hdr_was = opts.hdr;
+        vsync_was = opts.vsync;
     }
     if (src) {   // (the Window scaling filter's row: whether the window is the picture's size. Only the game's frames and the
                  // made ones: the start-up screen (no src) is drawn at the window's own size, which made the row read "Not

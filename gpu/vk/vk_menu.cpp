@@ -538,6 +538,8 @@ const char* hn_framegen(int v, int variant) {
              : v == 5 ? "Four made frames" : v == 6 ? "Five made frames" : v == 7 ? "Six made frames" : "Seven made frames");
     return b[std::clamp(v, 2, 8)];
 }
+MENU_HINTS(hn_vsync, 0, "Each frame as soon as it is ready: the least delay; the picture can tear.",
+           "No tearing, at a little more input delay.")
 MENU_HINTS(hn_pace, 0, "As soon as it is ready.", "At an even interval: less stutter, at up to one frame of delay.")
 MENU_HINTS(hn_output_res, 0, "The game's own size.",
            "The sharpest on a 2560x1440 screen: nothing to scale to the window.",
@@ -601,6 +603,9 @@ Row rows[] = {
      "Makes frames between the game's own, for smoother motion, at a little input delay. Fast motion or camera cuts can "
      "show artifacts.", hn_framegen, false, true},
     {TAB_GRAPHICS, "Frame pacing", &opts.pace, 0, 1, 1, tx_onoff, "When each frame is shown.", hn_pace},
+    {TAB_GRAPHICS, "VSync", &opts.vsync, 0, 1, 1, tx_onoff,
+     "Waits for the screen's refresh before showing each frame: no tearing (a line cutting the picture in fast turns).",
+     hn_vsync, false, true},
     {TAB_GRAPHICS, "HDR", &opts.hdr, 0, 2, 1, tx_hdr,
      "HDR10 out on an HDR display (Windows: Use HDR on in the display settings). Expanded: the game's SDR picture, its white at "
      "the paper white and its highlights up to the peak. Native: the game's own HDR, told the display's peak and paper white.",
