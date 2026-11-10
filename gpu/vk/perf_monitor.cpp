@@ -97,6 +97,18 @@ uint64_t process_working_set() {
 #endif
 }
 
+void fill(HDC dc, int x, int y, int w, int h, COLORREF c) {
+    RECT r{x, y, x + w, y + h};
+    HBRUSH b = CreateSolidBrush(c);
+    FillRect(dc, &r, b);
+    DeleteObject(b);
+}
+
+HFONT make_font(int px, int weight) {
+    return CreateFontA(-px, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                       NONANTIALIASED_QUALITY, DEFAULT_PITCH, "Segoe UI");
+}
+
 void format_bytes(char* out, size_t n, uint64_t used, uint64_t total) {
     constexpr double GiB = 1024.0 * 1024.0 * 1024.0;
     if (!total) snprintf(out, n, "%.1f GB", used / GiB);
@@ -162,20 +174,58 @@ bool perf_monitor_sample() {
     return true;
 }
 
-int perf_monitor_rows(const char* labels[], char values[][40]) {
-    static const char* names[kRows] = {"CPU usage", "Frame time", "Graphics VRAM", "GPU time", "RAM", "Framerate"};
-    for (int i = 0; i < kRows; i++) labels[i] = names[i];
-    if (snap.have_cpu) snprintf(values[0], 40, "%.1f%%", snap.cpu_pct);
+uint32_t perf_monitor_width(int scale) { return 260u * (uint32_t)std::max(scale, 1); }
+uint32_t perf_monitor_height(int scale) { return 212u * (uint32_t)std::max(scale, 1); }
+
+void perf_monitor_paint(HDC dc, uint32_t w, uint32_t h, int scale) {
+    (void)h;
+    const int s = std::max(scale, 1);
+    fill(dc, 0, 0, (int)w, (int)h, RGB(0, 0, 0));   // black is keyed transparent by vk_menu.cpp
+    SetBkMode(dc, TRANSPARENT);
+
+    const COLORREF border = RGB(226, 42, 52);
+    const COLORREF panel = RGB(50, 9, 12);
+    const COLORREF label_colour = RGB(232, 210, 212);
+    const COLORREF value_colour = RGB(255, 244, 244);
+    const int row_h = 32 * s, gap = 4 * s;
+
+    const char* labels[kRows] = {"CPU Usage", "Frame Time", "Graphics VRAM", "GPU Time", "RAM", "Framerate"};
+    char values[kRows][40]{};
+    if (snap.have_cpu) snprintf(values[0], sizeof values[0], "%.1f%%", snap.cpu_pct);
     else strcpy(values[0], "--");
-    if (snap.have_rate) snprintf(values[1], 40, "%.2f ms", snap.frame_ms);
+    if (snap.have_rate) snprintf(values[1], sizeof values[1], "%.2f ms", snap.frame_ms);
     else strcpy(values[1], "--");
-    format_bytes(values[2], 40, snap.vram_used, snap.vram_budget);
-    if (snap.have_gpu) snprintf(values[3], 40, "%.2f ms", snap.gpu_ms);
+    format_bytes(values[2], sizeof values[2], snap.vram_used, snap.vram_budget);
+    if (snap.have_gpu) snprintf(values[3], sizeof values[3], "%.2f ms", snap.gpu_ms);
     else strcpy(values[3], "--");
-    format_bytes(values[4], 40, snap.ram_used, snap.ram_total);
-    if (snap.have_rate) snprintf(values[5], 40, "%.1f FPS", snap.fps);
+    format_bytes(values[4], sizeof values[4], snap.ram_used, snap.ram_total);
+    if (snap.have_rate) snprintf(values[5], sizeof values[5], "%.1f FPS", snap.fps);
     else strcpy(values[5], "--");
-    return kRows;
+
+    HFONT label_font = make_font(12 * s, FW_SEMIBOLD), value_font = make_font(13 * s, FW_BOLD);
+    HGDIOBJ old = SelectObject(dc, label_font);
+    SetTextAlign(dc, TA_LEFT | TA_TOP);
+
+    for (int i = 0; i < kRows; i++) {
+        const int y = i * (row_h + gap);
+        fill(dc, 0, y, (int)w, row_h, border);
+        fill(dc, 2 * s, y + 2 * s, (int)w - 4 * s, row_h - 4 * s, panel);
+        fill(dc, 2 * s, y + 2 * s, 5 * s, row_h - 4 * s, border);
+
+        SelectObject(dc, label_font);
+        SetTextColor(dc, label_colour);
+        TextOutA(dc, 12 * s, y + 8 * s, labels[i], (int)strlen(labels[i]));
+
+        SelectObject(dc, value_font);
+        SetTextColor(dc, value_colour);
+        SetTextAlign(dc, TA_RIGHT | TA_TOP);
+        TextOutA(dc, (int)w - 10 * s, y + 7 * s, values[i], (int)strlen(values[i]));
+        SetTextAlign(dc, TA_LEFT | TA_TOP);
+    }
+
+    SelectObject(dc, old);
+    DeleteObject(label_font);
+    DeleteObject(value_font);
 }
 
 } // namespace mkwvk

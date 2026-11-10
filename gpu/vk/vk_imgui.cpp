@@ -386,6 +386,44 @@ ImTextureData* logo(float* aspect) {
     *aspect = logo_aspect;
     return logo_;
 }
+std::vector<ImTextureData*> pictures_dying;   // (a picture's old size: let go once the backend destroyed it)
+ImTextureData* picture(ImTextureData*& slot, int w, int h, const void* rgba) {
+    for (size_t i = 0; i < pictures_dying.size();) {
+        ImTextureData* t = pictures_dying[i];
+        if (t->Status == ImTextureStatus_Destroyed) {
+            ImGui::UnregisterUserTexture(t);
+            IM_DELETE(t);
+            pictures_dying.erase(pictures_dying.begin() + (ptrdiff_t)i);
+        } else i++;
+    }
+    if (slot && (slot->Width != w || slot->Height != h)) {
+        if (slot->Status == ImTextureStatus_WantCreate) {   // (never made: nothing to destroy)
+            ImGui::UnregisterUserTexture(slot);
+            IM_DELETE(slot);
+        } else {
+            slot->SetStatus(ImTextureStatus_WantDestroy);
+            pictures_dying.push_back(slot);
+        }
+        slot = nullptr;
+    }
+    if (!slot) {
+        slot = IM_NEW(ImTextureData)();
+        slot->Create(ImTextureFormat_RGBA32, w, h);
+        memcpy(slot->GetPixels(), rgba, (size_t)w * h * 4);
+        slot->UseColors = true;
+        ImGui::RegisterUserTexture(slot);
+        return slot;
+    }
+    memcpy(slot->GetPixels(), rgba, (size_t)w * h * 4);
+    if (slot->Status != ImTextureStatus_WantCreate) {
+        const ImTextureRect all{0, 0, (unsigned short)w, (unsigned short)h};
+        slot->Updates.clear();
+        slot->Updates.push_back(all);
+        slot->UpdateRect = all;
+        slot->SetStatus(ImTextureStatus_WantUpdates);
+    }
+    return slot;
+}
 
 void idle() {
     if (!ready) return;

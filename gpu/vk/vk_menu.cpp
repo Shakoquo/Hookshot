@@ -1898,21 +1898,47 @@ void draw_fps(ui::Ctx& c, bool under_banner) {
     if (fps_sub[0]) ui::text_mid(c, c.f.body, 12.5f * s, a.x + 12 * s, a.y + 37 * s, ui::kSoft, fps_sub);
 }
 
-/// (Mako) The performance monitor (perf_monitor.cpp, by Ducky): six plates down the left edge, in the menu's colours
+/// (Mako) The performance monitor (perf_monitor.cpp, by Ducky) as 3.0.2 drew it: perf_monitor_paint's red plates (GDI,
+/// black keyed out), 260 x 212 at the window's whole scale (height / 720), at (12, 260) times that scale
+std::atomic<bool> perf_new{true};
 void draw_perf(ui::Ctx& c) {
-    const char* labels[8];
-    char values[8][40];
-    const int n = perf_monitor_rows(labels, values);
-    const float s = c.s, w = 236 * s, rh = 30 * s, gap = 4 * s;
-    float y = c.safe + 60 * s;
-    for (int i = 0; i < n; i++, y += rh + gap) {
-        const ImVec2 a(c.safe, y), b(c.safe + w, y + rh);
-        c.d->AddRectFilled(a, b, ui::rgba(10, 16, 30, 226), ui::kRound * s);
-        c.d->AddRect(a, b, ui::kBoxEdge, ui::kRound * s, 0, std::max(1.0f, s));
-        c.d->AddRectFilled(ImVec2(a.x + 3 * s, a.y + 6 * s), ImVec2(a.x + 6 * s, b.y - 6 * s), ui::kAccent, 1.5f * s);
-        ui::text_mid(c, c.f.body, 12.5f * s, a.x + 12 * s, a.y + rh * 0.5f, ui::kSoft, labels[i]);
-        ui::text_mid_right(c, c.f.strong, 13.5f * s, b.x - 10 * s, a.y + rh * 0.5f, ui::kInkBright, values[i]);
+    static ImTextureData* tex = nullptr;
+    static int drawn_scale = 0;
+    const int scale = std::max(1, (int)c.h / 720);
+    const uint32_t w = perf_monitor_width(scale), h = perf_monitor_height(scale);
+    if (perf_new.exchange(false) || drawn_scale != scale || !tex) {
+        drawn_scale = scale;
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+        bi.bmiHeader.biWidth = (LONG)w;
+        bi.bmiHeader.biHeight = -(LONG)h;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        HDC dc = CreateCompatibleDC(nullptr);
+        void* bits = nullptr;
+        HBITMAP bmp = dc ? CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+        if (!bmp) {
+            if (dc) DeleteDC(dc);
+            return;
+        }
+        HGDIOBJ old = SelectObject(dc, bmp);
+        perf_monitor_paint(dc, w, h, scale);
+        GdiFlush();
+        static std::vector<uint8_t> rgba;
+        rgba.resize((size_t)w * h * 4);
+        const uint8_t* src = (const uint8_t*)bits;
+        for (size_t i = 0; i < (size_t)w * h; i++) {   // (BGRX to RGBA; black is see-through, as 3.0.2 keyed it)
+            const uint8_t bl = src[i * 4], g = src[i * 4 + 1], r = src[i * 4 + 2];
+            rgba[i * 4] = r, rgba[i * 4 + 1] = g, rgba[i * 4 + 2] = bl, rgba[i * 4 + 3] = (r | g | bl) ? 255 : 0;
+        }
+        SelectObject(dc, old);
+        DeleteObject(bmp);
+        DeleteDC(dc);
+        tex = ui::picture(tex, (int)w, (int)h, rgba.data());
     }
+    const float x = 12.0f * scale, y = 260.0f * scale;
+    c.d->AddImage(tex->GetTexRef(), ImVec2(x, y), ImVec2(x + w, y + h));
 }
 
 /// The start-up screen: the logo, the wordmark, what the start is doing, a bar, on a warm dark. A little below the middle; what
@@ -2658,7 +2684,7 @@ void menu_tick() {
             else fps_sub[0] = 0;
         }
     }
-    if (opts.resource_monitor) perf_monitor_sample();   // (Mako: drawn by draw_perf)
+    if (opts.resource_monitor && perf_monitor_sample()) perf_new = true;   // (Mako: drawn by draw_perf)
 }
 
 void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
