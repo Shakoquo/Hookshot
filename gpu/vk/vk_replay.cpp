@@ -30,6 +30,7 @@
 #include "vk_gprof.h"
 #include "vk_framegen.h"
 #include "vk_menu.h"
+#include "perf_monitor.h"
 #include "vk_jobs.h"
 #include "vk_shader.h"
 #include "vk_state.h"
@@ -251,6 +252,7 @@ void gpu_time_collect(Recording& r) {
     const int64_t ns = (int64_t)((t[1] - t[0]) * (double)dev.props.limits.timestampPeriod);
     st_gpu_ns += ns;
     st_gpu_max_ns = std::max(st_gpu_max_ns, ns);
+    perf_monitor_note_gpu_time((uint64_t)ns);
 }
 void gpu_time_begin(Recording& r) {
     if (!ts_pool) {
