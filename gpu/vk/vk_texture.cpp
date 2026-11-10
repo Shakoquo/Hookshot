@@ -2236,10 +2236,17 @@ namespace {
 /// ones can be data (height maps, look-up tables) that a frame without would get wrong. RX_VK_UPLOAD_BUDGET_MS=<n>: the
 /// budget (40: only an area load's burst; at 8 the ground's streamed textures waited a frame in ordinary play and the ground
 /// flickered, Discord 2026-11-09), 0: no deferral, as before
-bool upload_defer(const Texture& tex) {
+/// (Mako) Left for later once only: the frames after it upload it whatever their budget. Before, a texture could be left frame
+/// after frame while other uploads (textures made again after eviction, near the VRAM budget) took each frame's 40 ms first:
+/// the ground came in flat on arriving somewhere and stayed so until the pause menu's light frames let it through.
+/// RX_VK_DEFER_AGAIN=1: as before
+bool upload_defer(Texture& tex) {
     static const int64_t budget_ns = (int64_t)(getenv("RX_VK_UPLOAD_BUDGET_MS") ? atof(getenv("RX_VK_UPLOAD_BUDGET_MS")) : 40.0) * 1000000;
     if (!budget_ns || !upload_defer_ok || tex.uploaded || !tex.astc || tex.gpu_written) return false;
     if (frame_upload_ns.load(std::memory_order_relaxed) < budget_ns) return false;
+    static const bool again = getenv("RX_VK_DEFER_AGAIN") != nullptr;
+    if (!again && tex.deferred_at && tex.deferred_at != frame_no && frame_no - tex.deferred_at <= 8) return false;   // (left last time)
+    if (tex.deferred_at != frame_no) tex.deferred_at = frame_no;
     st_deferred.fetch_add(1, std::memory_order_relaxed), st_deferred_frame.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
