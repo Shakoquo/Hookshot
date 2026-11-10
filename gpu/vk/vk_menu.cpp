@@ -25,6 +25,7 @@
 
 #include "vk_paths.h"
 #include "vk_menu.h"
+#include "perf_monitor.h"
 #include "vk_menu_hit.h"
 #include "vk_draw.h"   // (pipeline_cache_save: Restart now keeps what was built)
 #include "oot_cheat_items.h"
@@ -489,6 +490,8 @@ Row rows[] = {
     // Gameplay
     {TAB_GAMEPLAY, "FPS counter", &opts.show_fps, 0, 1, 1, tx_onoff, "Frames per second in the top right corner.", hn_fps,
      false, true},
+    {TAB_GAMEPLAY, "Performance monitor", &opts.resource_monitor, 0, 1, 1, tx_onoff,
+     "CPU, frame time, VRAM, GPU time, RAM and FPS in red panels on the left of the screen.", nullptr, false, true},
     {TAB_GAMEPLAY, "Game speed", &opts.realtime, 0, 1, 1, tx_speed, "How the game keeps time when it runs below 60 fps.",
      hn_speed},
     {TAB_GAMEPLAY, "Text speed", &opts.text_speed, 0, 3, 1, tx_text_speed,
@@ -1010,7 +1013,7 @@ struct Bitmap {
     bool keyed = false;                   // (black is see-through: copied as the runs of pixels in between)
     std::vector<VkBufferImageCopy> runs;
 };
-Bitmap menu_bmp, fps_bmp;
+Bitmap menu_bmp, fps_bmp, perf_bmp;
 std::mutex bmp_mu;
 int scale_of(uint32_t h) { return std::max(1u, h / 720); }
 
@@ -1554,7 +1557,7 @@ struct Upload {
     void* map = nullptr;
     uint64_t size = 0, version = 0;
 };
-Upload ups[3][3];   // (the menu's, the counter's, the start-up screen's; a frame in flight's each)
+Upload ups[4][3];   // (the menu's, the counter's, the start-up screen's, the performance monitor's; a frame in flight's each)
 
 void copy_over(VkCommandBuffer cmd, VkImage dst, Bitmap& b, Upload& u, int x, int y, uint32_t w, uint32_t h) {
     std::lock_guard lk(bmp_mu);
@@ -1707,6 +1710,7 @@ void menu_note_present_sizes(uint32_t picture_w, uint32_t picture_h, uint32_t wi
 void menu_note_frame(bool game_frame, int shown) {
     if (shown) shown_frames.fetch_add(shown, std::memory_order_relaxed);
     if (game_frame) game_frames.fetch_add(1, std::memory_order_relaxed);
+    perf_monitor_note_frame(game_frame);
 }
 
 // The Fullscreen row and F11 are one setting: the row asks the window's thread (host/display.c), F11 shows in the row
@@ -2259,6 +2263,15 @@ void menu_tick() {
             gdi_draw(fps_bmp, 120u * scale, 54u * scale, paint_fps, scale);
         }
     }
+    if (opts.resource_monitor) {
+        static int drawn_scale = 0;
+        const bool sampled = perf_monitor_sample();
+        if (sampled || drawn_scale != scale) {
+            drawn_scale = scale;
+            perf_bmp.keyed = true;
+            gdi_draw(perf_bmp, perf_monitor_width(scale), perf_monitor_height(scale), perf_monitor_paint, scale);
+        }
+    }
 }
 
 void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_t h) {
@@ -2273,6 +2286,18 @@ void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_
         const uint32_t sw = startup_bmp.w, sh = startup_bmp.h;
         lk.unlock();
         if (sw) copy_over(cmd, dst, startup_bmp, ups[2][slot], (int)(w - sw) / 2, (int)(h - sh) / 2, w, h);
+    }
+    if (opts.resource_monitor && !startup_on.load(std::memory_order_relaxed)) {
+        VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        mb.srcStageMask = mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        mb.srcAccessMask = mb.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        di.memoryBarrierCount = 1, di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &di);
+        std::unique_lock lk(bmp_mu);
+        const uint32_t pw = perf_bmp.w;
+        lk.unlock();
+        if (pw) copy_over(cmd, dst, perf_bmp, ups[3][slot], (int)(12 * cur_scale), (int)(260 * cur_scale), w, h);
     }
     if (opts.show_fps && !startup_on.load(std::memory_order_relaxed)) {   // (no game frames yet: not "0 FPS" over the start-up screen)
         // The game image was just blitted (or cleared) into dst. Its write must

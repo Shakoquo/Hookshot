@@ -87,6 +87,11 @@ std::string program_textures(const NvnState& s, const Program& p);   // (hooksho
 std::string program_code_keys(const NvnState& s);   // (hookshot) " stage:key" for each of the bound program's codes
 const Program* program_pick(const NvnState& s, ProgramKind kind, const uint8_t color_types[8]);   // (program_for without its cache)
 void program_wait(const Program* p);
+/// (hookshot) p's stages have their modules (made again from its record if they were let go); false: they could not be made
+bool program_modules(const Program& p);
+/// (hookshot) the modules of the programs read from hookshot_programs.bin let go (to be made again by program_modules when wanted);
+/// how many programs. RX_VK_KEEP_MODULES=1: none
+size_t program_modules_release();
 uint64_t program_cache_stamp();   // (what the kept programs and pipelines are good for)
 size_t program_cache_load_some(const std::unordered_set<uint64_t>& wanted, const std::function<void(Program&)>& fn,
                                bool computes = true);   // (computes: and every kept compute program)

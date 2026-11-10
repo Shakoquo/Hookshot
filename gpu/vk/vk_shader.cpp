@@ -1341,6 +1341,20 @@ void program_cache_save(const Program& p, const std::vector<std::vector<uint32_t
 }
 
 /// The kept variants of key read from the file (in: a handle on it, used under mu when given) and made ready, to variants
+// (hookshot, 16 GB PCs) each program read from hookshot_programs.bin: where its record is, and whether its stages' modules were let
+// go after the start's precompile (the driver's copies of 9500 programs, written once and then paged out). Kept beside the programs,
+// not in them: Program's size is part of the cache's stamp, and a field more threw every player's kept programs away
+struct ProgramRecord {
+    uint64_t at = 0, size = 0;
+    bool gone = false;
+};
+std::mutex records_mu;
+std::unordered_map<const Program*, ProgramRecord> program_records;
+std::atomic<bool> any_modules_gone{false};
+void record_of(const Program* p, uint64_t at, uint64_t size) {
+    std::lock_guard lk(records_mu);
+    program_records[p] = {at, size, false};
+}
 void program_cache_read(FILE* in, std::mutex* mu, uint64_t key, const std::vector<DiskRecord>& recs,
                         std::vector<std::unique_ptr<Program>>& variants) {
     for (const DiskRecord& d : recs) {
@@ -1363,6 +1377,7 @@ void program_cache_read(FILE* in, std::mutex* mu, uint64_t key, const std::vecto
         Reader r{data.data() + 16, data.data() + data.size()};
         auto p = std::make_unique<Program>();
         p->key = key;
+        record_of(p.get(), d.at, d.size);
         get_head(r, *p);
         p->variant = answers_hash(*p);
         const uint64_t n = r.count(1);
@@ -1422,6 +1437,92 @@ void program_cache_load(uint64_t key, std::vector<std::unique_ptr<Program>>& var
     PROF_EXACT();   // (from disk: a mesh program's too)
     program_cache_read(disk_in, &disk_mu, key, recs, variants);
 }
+
+}  // namespace (program_modules and program_modules_release: vk_shader.h)
+
+bool program_modules(const Program& cp) {
+    if (!any_modules_gone.load(std::memory_order_acquire)) return true;
+    Program& p = const_cast<Program&>(cp);
+    // (records_mu held throughout: one program made again at a time, only ever for a pipeline not built at the start)
+    std::lock_guard lk(records_mu);
+    auto it = program_records.find(&p);
+    if (it == program_records.end() || !it->second.gone) return true;
+    {   // (its modules there after all: a program made at the address of one let go and deleted since)
+        bool all = !p.stages.empty();
+        for (const Stage& st : p.stages) all = all && st.module;
+        if (all) {
+            it->second.gone = false;
+            return true;
+        }
+    }
+    const uint64_t at = it->second.at, size = it->second.size;
+    std::vector<uint8_t> data(16 + size);
+    {
+        std::lock_guard dl(disk_mu);
+        if (!disk_in || _fseeki64(disk_in, (long long)at - 16, SEEK_SET) || fread(data.data(), 1, data.size(), disk_in) != data.size())
+            data.clear();
+    }
+    uint64_t head[2]{};
+    if (data.size() >= 16) std::memcpy(head, data.data(), 16);
+    bool ok = !data.empty() && head[0] == p.key && head[1] == size;
+    if (ok) {
+        Reader r{data.data() + 16, data.data() + data.size()};
+        Program scratch;
+        get_head(r, scratch);
+        const uint64_t n = r.count(1);
+        ok = !r.bad && n == p.stages.size();
+        std::vector<VkShaderModule> made;
+        for (uint64_t k = 0; ok && k < n; k++) {
+            r.get<int>();
+            r.get<VkShaderStageFlagBits>();
+            std::vector<uint32_t> spirv;
+            std::vector<uint8_t> c1;
+            r.list(spirv);
+            r.list(c1);
+            Shader::Info info;
+            get_info(r, info);
+            ok = !r.bad && !spirv.empty();
+            if (ok) made.push_back(make_module(spirv)), ok = made.back() != VK_NULL_HANDLE;
+        }
+        if (ok) {
+            for (size_t k = 0; k < made.size(); k++) p.stages[k].module = made[k];
+        } else {
+            for (VkShaderModule m : made)
+                if (m) vkDestroyShaderModule(dev.device, m, nullptr);
+        }
+    }
+    static std::atomic<int> told{0};
+    static std::atomic<int64_t> again{0};
+    if (!ok) {
+        if (told++ < 20) logf("vk: program %016llx: its modules could not be made again from the program cache", (unsigned long long)p.key);
+        return false;
+    }
+    it->second.gone = false;
+    const int64_t n = ++again;
+    if (n == 1 || n % 500 == 0) logf("vk: %lld programs' modules made again from the program cache (let go after the start)", (long long)n);
+    return true;
+}
+
+size_t program_modules_release() {
+    if (getenv("RX_VK_KEEP_MODULES")) return 0;
+    size_t n = 0;
+    std::lock_guard lk(shader_mu);
+    std::lock_guard rl(records_mu);
+    for (auto& kv : programs)
+        for (auto& up : kv.second) {
+            Program& p = *up;
+            auto it = program_records.find(&p);
+            if (it == program_records.end() || it->second.gone || !p.ready.load(std::memory_order_acquire) || p.failed) continue;
+            bool any = false;
+            for (Stage& st : p.stages)
+                if (st.module) vkDestroyShaderModule(dev.device, st.module, nullptr), st.module = VK_NULL_HANDLE, any = true;
+            if (any) it->second.gone = true, n++;
+        }
+    if (n) any_modules_gone.store(true, std::memory_order_release);
+    return n;
+}
+
+namespace {
 
 void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* fsc, const Code* csc,
                     const uint8_t color_types[8]) {
