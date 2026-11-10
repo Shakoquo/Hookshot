@@ -2,6 +2,7 @@
 // wants where the GPU has them: mesh shaders, host memory import, graphics pipeline libraries), the window's
 // swapchain, and the rx_* table (vk_api.h). The NVN replay itself is vk_replay.cpp.
 #include "vk_paths.h"
+#include "vk_damaged.h"
 #include "vk_loader.h"
 
 #include <atomic>
@@ -127,8 +128,32 @@ bool create_instance() {
     return true;
 }
 
+// (Mako) an incomplete dump's three damaged textures given stand-ins, before the game reads any (vk_damaged.h)
+void stand_in_damaged_textures() {
+    if (getenv("MAKO_NO_STAND_IN")) return;
+    std::filesystem::path tex;
+    if (const char* d = getenv("MAKO_STAND_IN_DIR")) {   // (a test: that folder instead of the game's romfs\Tex)
+        tex = d;
+    } else {
+        char exe[MAX_PATH];
+        const DWORD n = game_module_path(exe, MAX_PATH);
+        if (!n || n >= MAX_PATH) return;
+        tex = std::filesystem::path(exe).parent_path() / "romfs" / "Tex";
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_directory(tex, ec)) return;
+    const auto done = damaged::repair(tex);
+    for (const auto& f : done)
+        logf("vk: game file romfs\\Tex\\%s is damaged (an incomplete dump: a complete one is about 23.8 GB): %s%s", f.name.c_str(),
+             f.stand_in.empty() ? "nothing similar found, left as it is" : "in its place now ", f.stand_in.c_str());
+    if (!done.empty())
+        logf("vk: the damaged files are kept beside them as <name>.damaged; dump the game again for the original look "
+             "(MAKO_NO_STAND_IN=1: not done)");
+}
+
 bool pick_device() {
     menu_init();
+    stand_in_damaged_textures();
     uint32_t n = 0;
     vkEnumeratePhysicalDevices(dev.instance, &n, nullptr);
     std::vector<VkPhysicalDevice> all(n);
