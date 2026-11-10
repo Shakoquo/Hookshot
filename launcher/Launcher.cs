@@ -27,7 +27,7 @@ static class Fork {
     // (the update check compares the first number of the tags: the first Mako release must be numbered above amd-fix-2.1, or the
     // 2.x launchers players have would think it older and never offer it)
     public const string Base = "mako-3.0";      // (host/hos_update.c HOOKSHOT_FORK_BASE: the exe this launcher ships with)
-    public const string Version = "mako-3.0.1.1";// (HOOKSHOT_FORK_VERSION)
+    public const string Version = "mako-3.0.2"; // (HOOKSHOT_FORK_VERSION)
     public const int Api = 7;                   // (gpu/vk/vk_api.h MKWVK_API_VERSION)
     public const string Api_Url = "https://api.github.com/repos/Shakoquo/Hookshot/releases/latest";
     public const string Page = "https://github.com/Shakoquo/Hookshot/releases/latest";
