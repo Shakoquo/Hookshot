@@ -74,6 +74,7 @@ uint64_t ub_generation();
 void ub_thread_off();
 /// The pipeline cache to disk (force: whatever was built since the last save; else only after a few new ones)
 void pipeline_cache_save(bool force);
+void pipeline_cache_save_at_exit();   // (only when something new was compiled since the last save)
 
 /// The stream's uniform updates (UPDATE_UB, vk_replay.cpp) that overlap [addr, addr + n) and may not be in guest
 /// memory yet when the GPU reads it: a copy of the range with them applied, at the offset alloc returns in the

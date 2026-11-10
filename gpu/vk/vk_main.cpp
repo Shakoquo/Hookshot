@@ -1060,7 +1060,10 @@ __attribute__((visibility("default")))
 #endif
 void mkwvk_close_asked(void) {
     using namespace mkwvk;
-    if (!prep_running.load() || prepare_stopped()) return;
+    if (!prep_running.load() || prepare_stopped()) {   // (in play: the pipelines compiled since the last save, kept)
+        pipeline_cache_save_at_exit();
+        return;
+    }
     logf("vk: the window was closed while the shaders were prepared: stopping, what is done is kept");
     prepare_stop();
     if (WaitForSingleObject(prep_ended, 10000) != WAIT_OBJECT_0) logf("vk: the preparation did not stop within 10 s: closing anyway");

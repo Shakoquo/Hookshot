@@ -26,6 +26,13 @@
 #include <thread>
 #include <setjmp.h>
 #include <signal.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 
@@ -762,8 +769,15 @@ bool depth_aspect(VkFormat f) {
 }
 
 // (hookshot) A driver's compiler that faults on a shader (amdvlk64.dll on a mesh program, Hookshot issue 26) costs that one draw, not the game
+// (and a stage with no module, one let go after the start whose record could not be read again (program_modules), fails the same way)
+static bool stages_have_modules(uint32_t n, const VkPipelineShaderStageCreateInfo* st) {
+    for (uint32_t i = 0; i < n; i++)
+        if (!st[i].module) return false;
+    return true;
+}
 #ifdef _WIN32
 __declspec(noinline) VkResult guarded_graphics(VkPipelineCache cache, const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl) {
+    if (!stages_have_modules(ci->stageCount, ci->pStages)) return VK_ERROR_INITIALIZATION_FAILED;
     __try {
         return vkCreateGraphicsPipelines(dev.device, cache, 1, ci, nullptr, pl);
     } __except (1) {
@@ -771,6 +785,7 @@ __declspec(noinline) VkResult guarded_graphics(VkPipelineCache cache, const VkGr
     }
 }
 __declspec(noinline) VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
+    if (!ci->stage.module) return VK_ERROR_INITIALIZATION_FAILED;
     __try {
         return vkCreateComputePipelines(dev.device, cache, 1, ci, nullptr, pl);
     } __except (1) {
@@ -816,6 +831,7 @@ static void install_driver_fault_guard() {
 }
 
 VkResult guarded_graphics(VkPipelineCache cache, const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl) {
+    if (!stages_have_modules(ci->stageCount, ci->pStages)) return VK_ERROR_INITIALIZATION_FAILED;
     install_driver_fault_guard();
     if (sigsetjmp(fault_jmp, 1) != 0) {
         logf("vk: the driver faulted compiling a graphics pipeline: that one is left out");
@@ -827,6 +843,7 @@ VkResult guarded_graphics(VkPipelineCache cache, const VkGraphicsPipelineCreateI
     return r;
 }
 VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
+    if (!ci->stage.module) return VK_ERROR_INITIALIZATION_FAILED;
     install_driver_fault_guard();
     if (sigsetjmp(fault_jmp, 1) != 0) {
         logf("vk: the driver faulted compiling a compute pipeline: that one is left out");
@@ -1376,6 +1393,7 @@ PipeEntry* graphics_pipeline(const Program& p, const NvnState& s, const Targets&
 /// part: -1 the whole pipeline, or the graphics pipeline library it stands for: 0 vertex input, 1 pre-rasterization, 2 fragment
 /// shader, 3 fragment output
 VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at, VkPrimitiveTopology topo, int part) {
+    program_modules(p);   // (made again if let go after the start)
     const Shader::Info& vs = *vertex_info(p);
     const auto t0 = std::chrono::steady_clock::now();
     std::vector<VkPipelineShaderStageCreateInfo> stages;
@@ -1546,6 +1564,15 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
         }
     }
     VkPipeline pl = VK_NULL_HANDLE;
+    // (whether the app's cache already had it: only real new compiles count toward saving mkw_vk_pipelines.bin again; counting
+    // the hits too made a 700-900 MB rewrite every 5 s of play after any scene change, a 1 GB private copy each time)
+    VkPipelineCreationFeedback fb_one{};
+    VkPipelineCreationFeedbackCreateInfo fb{VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO};
+    if (part < 0 && !driver_cache_only) {
+        fb.pPipelineCreationFeedback = &fb_one;
+        fb.pNext = ci.pNext;
+        ci.pNext = &fb;
+    }
     {   // (local) RX_VK_NOOPT=1: build every pipeline without the driver's optimizer. AMD's proprietary compiler crashes
         // (-13 here) or takes minutes on some Ocarina shaders it builds in seconds unoptimized (Lichii #200, #210).
         static const bool noopt = getenv("RX_VK_NOOPT") != nullptr;
@@ -1585,7 +1612,11 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
         pl = VK_NULL_HANDLE;
     }
     st_pipelines++;
-    pcache_built_since_save += !driver_cache_only;
+    if (!driver_cache_only) {
+        const bool known = (fb_one.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) &&
+                           (fb_one.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);
+        pcache_built_since_save += !known;
+    }
     st_pipeline_us += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
     return pl;
 }
@@ -4864,6 +4895,7 @@ bool fallback_compute_pipelines(Program& p) {
     static std::mutex mu;
     std::lock_guard lk(mu);
     if (!p.fallback_compute.empty()) return true;
+    program_modules(p);
     std::vector<VkPipeline> made(p.stages.size(), VK_NULL_HANDLE);
     bool any = false;
     for (size_t i = 0; i < p.stages.size(); i++) {
@@ -6049,6 +6081,7 @@ bool prepare_run(void (*progress)(size_t done, size_t total), bool background) {
     const auto warm_compute = [&](Program& p) {
         if (!warm_cs || taau_key(p.key)) return;
         ensure_layout(p);
+        program_modules(p);
         VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -6191,7 +6224,15 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
     }
     if (FILE* f = fopen(running.c_str(), "wb")) fprintf(f, "%d\n", ended_inside + 1), fclose(f);
     struct Done { const std::string& path; ~Done() { remove(path.c_str()); } } done_marker{running};
+    // (the committed memory at each step of it: what a 16 GB PC pays for the start)
+    const auto private_mb = [] {
+        PROCESS_MEMORY_COUNTERS_EX pm{};
+        pm.cb = sizeof pm;
+        return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pm, sizeof pm) ? (long long)(pm.PrivateUsage >> 20) : -1LL;
+    };
+    const long long mb0 = private_mb();
     pcache_init();
+    const long long mb1 = private_mb();
     std::vector<std::unique_ptr<PipeNote>> notes = pipe_notes_read();
     std::unordered_set<uint64_t> wanted;
     for (const auto& n : notes) wanted.insert(n->prog);
@@ -6200,6 +6241,8 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
         ensure_layout(p);
         if (p.compute) computes.push_back(&p);
     });
+    logf("vk: precompile memory (private MB): %lld at its start, %lld with the pipeline cache open, %lld with %zu notes and %zu programs read",
+         mb0, mb1, private_mb(), notes.size(), programs_n);
     const double read_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     const size_t total = notes.size() + computes.size();
     // (the workers' state on the heap: a start whose last pipelines never finish (two of 4926 on an RX 5700 XT, "stuck at
@@ -6227,6 +6270,7 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
             if (i >= total) return;
             if (i < computes.size()) {
                 Program& p = *computes[i];
+                program_modules(p);
                 VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
                 ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
                 ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -6279,15 +6323,23 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
             break;
         }
     }
+    size_t released = 0;
+    long long mb_built = -1;
     if (gone_on) {
         for (std::thread& t : threads) t.detach();
     } else {
         for (std::thread& t : threads) t.join();
         delete pre;
+        // (hookshot, 16 GB PCs) the programs' modules let go once their pipelines are built: the driver's copies were ~3 GB,
+        // written once at the start and then paged out. One wanted again for a new pipeline is made again from its record
+        mb_built = private_mb();
+        released = program_modules_release();
     }
     logf("vk: precompile: %zu programs, %zu graphics and %zu compute pipelines in %.0f ms (%.0f ms of it the caches opened, the notes "
          "and programs read)", programs_n, graphics_n, computes_n,
          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(), read_ms);
+    logf("vk: precompile memory (private MB): %lld with its pipelines built, %lld once %zu programs' modules were let go", mb_built, private_mb(),
+         released);
 }
 
 // (hookshot) The pipelines the notes predict for the programs no note names (vk_predict.cpp), after a prepare that prepared: each built
@@ -6467,6 +6519,7 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
                                                                      : dev.props.vendorID == 0x8086;
             auto build = [job] {
                 Program& q = const_cast<Program&>(*job);
+                program_modules(q);
                 VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
                 ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
                 ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -6512,6 +6565,7 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
     ParLock plk(!p.compute_pipeline);
     if (!p.compute_pipeline && !taau_key(p.key)) {   // (a stood-in network is never compiled)
         pcache_init();
+        program_modules(p);
         VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -6830,8 +6884,12 @@ int64_t draw_desc_reused() {
 }
 
 void pipeline_cache_save(bool force) {
-    if (!pcache || (!force && pcache_built_since_save < 32)) return;
+    // (in play at most every 3 minutes and only after 32 real new compiles; forced at exit and after preparing)
+    static std::atomic<int64_t> last_ms{0};
+    const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (!pcache || (!force && (pcache_built_since_save < 32 || (last_ms && now_ms - last_ms < 180000)))) return;
     pcache_built_since_save = 0;
+    last_ms = now_ms;
     // (on a thread of its own unless forced, at exit: ~100 MB fetched and written took the replay thread 100+ ms at
     // each scene change; the cache is internally synchronized, pipelines go on being built meanwhile)
     static std::atomic<bool> busy{false};
@@ -6841,22 +6899,40 @@ void pipeline_cache_save(bool force) {
         busy = true;
     }
     auto save = [] {
+        // (straight into a mapped view of the file: a vector of the whole cache was 700-900 MB more committed memory each time,
+        // on 16 GB PCs already paging; file-backed pages are written out instead of going to the page file)
         size_t n = 0;
         if (vkGetPipelineCacheData(dev.device, pcache, &n, nullptr) == VK_SUCCESS && n) {
-            std::vector<uint8_t> data(n);
-            if (vkGetPipelineCacheData(dev.device, pcache, &n, data.data()) == VK_SUCCESS) {
-                const std::string tmp = pcache_path + ".tmp";
-                if (FILE* f = fopen(tmp.c_str(), "wb")) {
-                    const bool ok = fwrite(data.data(), 1, n, f) == n;
-                    fclose(f);
-                    if (ok) MoveFileExA(tmp.c_str(), pcache_path.c_str(), MOVEFILE_REPLACE_EXISTING);
+            const std::string tmp = pcache_path + ".tmp";
+            bool ok = false;
+            HANDLE f = CreateFileA(tmp.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (f != INVALID_HANDLE_VALUE) {
+                size_t got = 0;
+                if (HANDLE m = CreateFileMappingA(f, nullptr, PAGE_READWRITE, (DWORD)((uint64_t)n >> 32), (DWORD)n, nullptr)) {
+                    if (void* v = MapViewOfFile(m, FILE_MAP_WRITE, 0, 0, n)) {
+                        got = n;
+                        ok = vkGetPipelineCacheData(dev.device, pcache, &got, v) == VK_SUCCESS;   // (VK_INCOMPLETE: grew meanwhile)
+                        UnmapViewOfFile(v);
+                    }
+                    CloseHandle(m);
                 }
+                if (ok && got < n) {   // (smaller than asked: the file cut to what was written)
+                    LARGE_INTEGER at;
+                    at.QuadPart = (LONGLONG)got;
+                    ok = SetFilePointerEx(f, at, nullptr, FILE_BEGIN) && SetEndOfFile(f);
+                }
+                CloseHandle(f);
+                if (ok) MoveFileExA(tmp.c_str(), pcache_path.c_str(), MOVEFILE_REPLACE_EXISTING);
+                else DeleteFileA(tmp.c_str());
             }
         }
         busy = false;
     };
     if (force) save();
     else std::thread(save).detach();
+}
+void pipeline_cache_save_at_exit() {
+    if (pcache_built_since_save > 0) pipeline_cache_save(true);
 }
 
 } // namespace mkwvk
