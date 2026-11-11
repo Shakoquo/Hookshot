@@ -389,6 +389,8 @@ class LauncherForm : Form {
         new[] { "HOOKSHOT_OCCLUSION_OFF", "1", "Occlusion tests off", "The game no longer guesses what is hidden: everything is drawn. Steadier sun glare on AMD cards, a little slower.", "" },
         // (Mako) Ducky's controller workaround: HOS_NO_SDL=1 leaves SDL out (host/pad_sdl.c), pads only through XInput
         new[] { "HOS_NO_SDL", "1", "Basic controller mode (tip by Ducky)", "Controller not detected, double inputs or wrong buttons? The game then reads only Xbox-style (XInput) controllers: a PlayStation pad needs Steam or DS4Windows. No motion aiming in this mode.", "" },
+        // (Mako) the predicted pipelines behind the game (gpu/vk/vk_draw.cpp predict_background); off: all before the title
+        new[] { "RX_VK_PREDICT_BG", "", "Quick first start", "On: after an update the game reaches the title much sooner and prepares the rest of its effects while you play, on 2 low-priority threads (possible small fps dips or stutters during the first hours). Off: everything before the title (up to ~40 min on AMD cards), smoothest play afterwards.", "0" },
     };
 
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
