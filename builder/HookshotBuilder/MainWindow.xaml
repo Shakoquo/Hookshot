@@ -214,6 +214,11 @@
                       Content="AMD FSR 4 (downloads AMD's runtime under AMD's license)"/>
             <TextBlock Style="{StaticResource Note}" FontSize="12" Margin="26,4,0,0" TextWrapping="Wrap"
                        Text="For AMD Radeon graphics cards. It is chosen in the game's Insert menu, as the Upscaler."/>
+            <!-- (Mako) the fast build: make_game.py with the fast option (the game's rarely run code less optimised) -->
+            <CheckBox x:Name="FastTick" Style="{StaticResource Tick}" IsChecked="False" Margin="0,10,0,0"
+                      Content="Fast build (about 1/3 less compile time, about 4-8% fewer FPS)"/>
+            <TextBlock x:Name="FastNote" Style="{StaticResource Note}" FontSize="12" Margin="26,4,0,0" TextWrapping="Wrap"
+                       Text="Compiles the parts of the game that run the least with less optimisation. Measured: about a third less time compiling the game code, and about 4 to 8% fewer FPS in game (Castle Town market, RX 9060 XT: 46 to 44 FPS standing, 43.5 to 41.7 walking). Nothing is removed from the game. Untick it and update to get the full speed back."/>
           </StackPanel>
 
           </Grid>

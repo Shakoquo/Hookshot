@@ -1331,6 +1331,17 @@ def ngx_built():
     return bool(sdk) and os.path.isfile(ngx_script().library(sdk, ngx_platform()))
 
 
+FAST_MARK = ".hookshot_fast"   # (Mako: a game folder built with --fast: --update builds it fast again, unless --no-fast)
+
+
+def fast_wanted(a, out):
+    """(Mako) The fast build: about half of the game's rarely run code compiled at -O0 instead of -O1 (nx2/build.py RX_FAST_SHARE;
+    all of it makes an exe over 2 GB, which Windows will not load), its hot code as always"""
+    if getattr(a, "no_fast", False):
+        return False
+    return bool(getattr(a, "fast", False)) or bool(a.update and os.path.isfile(os.path.join(out, FAST_MARK)))
+
+
 FSR_MARK = ".hookshot_fsr"   # (in a game folder built with AMD FSR 4: --update builds it with FSR again)
 
 
@@ -1436,6 +1447,9 @@ def parse_args():
     p.add_argument("--fetch-fsr-runtime", action="store_true",
                    help="with --fsr (Windows): download AMD's FSR runtime (scripts/ffx_sdk.py) and put it in the game folder")
     p.add_argument("--accept-amd-license", action="store_true", help="AMD's FSR SDK license, accepted (with --fetch-fsr-runtime)")
+    # (Mako: the fast build, nx2/build.py RX_FAST_SHARE: half the cold code at -O0)
+    p.add_argument("--fast", action="store_true", help="fast build: about half the compile time, a few fps less (rarely run code less optimised)")
+    p.add_argument("--no-fast", action="store_true", help="with --update: the normal build even if the folder was built fast")
     a = p.parse_args()
     if a.prepare:   # (first: a bad --game below is said as RecompLauncher's "error" line)
         global PREPARE
@@ -1592,6 +1606,13 @@ def main(a=None):
         os.environ.pop("HOOKSHOT_FSR", None)
         if os.path.isfile(os.path.join(out, FSR_MARK)):
             os.remove(os.path.join(out, FSR_MARK))
+    # (Mako: the fast build, and its mark for the next --update)
+    a.fast_build = fast_wanted(a, out)
+    if a.fast_build:
+        open(os.path.join(out, FAST_MARK), "w").close()
+        print("fast build: the game's rarely run code is compiled less optimised (about half the compile time, a few fps less)", flush=True)
+    elif os.path.isfile(os.path.join(out, FAST_MARK)):
+        os.remove(os.path.join(out, FAST_MARK))
     exefs = os.path.join(work, "exefs")
     romfs = os.path.join(out, "romfs")
 
@@ -1784,7 +1805,8 @@ def main(a=None):
             if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
                 plan[:] = [int(parts[1]), int(parts[2])]
     try:
-        run(PY + ["nx2/build.py", "--standalone", "--jobs", str(a.jobs)], env, compiled)
+        run(PY + ["nx2/build.py", "--standalone", "--jobs", str(a.jobs)],
+            dict(env or {}, RX_FAST_SHARE="0.5") if getattr(a, "fast_build", False) else env, compiled)
     except SystemExit:
         # (hookshot) a compile or link that failed forgets the lift: the next build translates the game again. A lifted file cut short
         # (an antivirus, a full disk, a stopped run: "g_module_b" for g_module_base, issue 1197) or lifted C another builder left (20
