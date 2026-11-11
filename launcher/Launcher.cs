@@ -605,7 +605,7 @@ class LauncherForm : Form {
         for (int i = 0; i < Languages.Length; i++) { langItems[i] = Languages[i][1]; langValues[i] = i; }
         langSel = new Selector { Key = "language", Label = "Language", Items = langItems, Values = langValues, Page = 2, Index = 0,
                                  HelpText = "The game's language: text and voices.",
-                                 R = new RectangleF(cx + colW + 14, 112 + 70, colW, 62) };
+                                 R = new RectangleF(cx + GameRows.Length % 2 * (colW + 14), 112 + GameRows.Length / 2 * 70, colW, 62) };   // (after the Game rows)
         langSel.Changed = s => { if (!loading) SaveLanguage(); };
         widgets.Add(langSel);
         for (int i = 0; i < Fixes.Length; i++) {
@@ -838,7 +838,7 @@ class LauncherForm : Form {
         float x = LeftW + 36;
         if (PageNow == 0) PaintRecommended(g, x);
         if (PageNow == 2)
-            Theme.Text_(g, "Controls are set in game: press Insert for the menu.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + 2 * 70 + 6, 500, 20),
+            Theme.Text_(g, "Controls are set in game: press Insert for the menu.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + (GameRows.Length + 2) / 2 * 70 + 6, 500, 20),
                         StringAlignment.Near, StringAlignment.Near);
         if (PageNow == 3)
             Theme.Text_(g, "Read by the game when it starts.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + Fixes.Length * 92, 500, 20),
