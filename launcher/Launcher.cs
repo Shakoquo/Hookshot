@@ -1,6 +1,6 @@
 // Mako Launcher (Ocarina of Time PC recompile, by sharkiix; based on Hookshot, GPL-3). The window players open first: update
 // check (the same GitHub release and graphics patch rules as host/hos_update.c), the game's settings (hookshot_options.ini, the
-// Insert menu's file), the AMD fix switches (hookshot_env.txt, read by the game at start), language, saves folders, and PLAY.
+// Insert menu's file), the fix switches (AMD fixes, basic controller mode) (hookshot_env.txt, read by the game at start), language, saves folders, and PLAY.
 // It sits beside the game's exe. One window drawn by hand (no stock controls): a dark navy theme taken from the shark logo,
 // animated light streaks and bubbles, hover fades. Built with the .NET Framework's own csc (C# 5, nothing to install): build.ps1.
 using System;
@@ -387,6 +387,8 @@ class LauncherForm : Form {
     static readonly string[][] Fixes = {
         new[] { "RX_VK_WAIT_GPU", "", "No blue light flashes", "Each frame waits for the graphics card to finish the previous one. Stops the one-frame blue light flashes in Hyrule Field. Costs a few fps. Recommended.", "-1" },
         new[] { "HOOKSHOT_OCCLUSION_OFF", "1", "Occlusion tests off", "The game no longer guesses what is hidden: everything is drawn. Steadier sun glare on AMD cards, a little slower.", "" },
+        // (Mako) Ducky's controller workaround: HOS_NO_SDL=1 leaves SDL out (host/pad_sdl.c), pads only through XInput
+        new[] { "HOS_NO_SDL", "1", "Basic controller mode (tip by Ducky)", "Controller not detected, double inputs or wrong buttons? The game then reads only Xbox-style (XInput) controllers: a PlayStation pad needs Steam or DS4Windows. No motion aiming in this mode.", "" },
     };
 
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
@@ -432,7 +434,7 @@ class LauncherForm : Form {
                               Click = () => OpenUrl(Fork.Home) });
 
         // (tabs)
-        string[] names = { "Graphics", "Game", "AMD fixes", "About" };
+        string[] names = { "Graphics", "Game", "Fixes", "About" };
         float tx = LeftW + 36;
         using (var g = CreateGraphics())
             for (int i = 0; i < names.Length; i++) {
@@ -842,7 +844,7 @@ class LauncherForm : Form {
             if (lines.Count == 0 && File.Exists(envPath)) File.Delete(envPath);
             else if (lines.Count > 0) File.WriteAllLines(envPath, lines.ToArray(), new UTF8Encoding(false));
         } catch (Exception ex) {
-            MessageBox.Show(this, "The AMD fix switches could not be saved:\n" + ex.Message, Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, "The fix switches could not be saved:\n" + ex.Message, Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
