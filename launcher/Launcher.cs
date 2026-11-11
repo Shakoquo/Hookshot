@@ -540,7 +540,7 @@ class LauncherForm : Form {
         // (Mako) Ducky's controller workaround: HOS_NO_SDL=1 leaves SDL out (host/pad_sdl.c), pads only through XInput
         new[] { "HOS_NO_SDL", "1", "Basic controller mode (tip by Ducky)", "Controller not detected, double inputs or wrong buttons? Reads only Xbox-style (XInput) pads: a PlayStation pad then needs Steam or DS4Windows. No motion aiming.", "" },
         // (Mako) the predicted pipelines behind the game (gpu/vk/vk_draw.cpp predict_background); off: all before the title
-        new[] { "RX_VK_PREDICT_BG", "1", "Quick first start", "Off (recommended): after an update every effect is prepared before the title (up to ~40 min, once). On: the title comes much sooner, but expect stutters for hours.", "" },
+        new[] { "RX_VK_PREDICT_BG", "1", "Quick first start", "Off (recommended): effects are prepared the first time they appear, as in Mako 3.3 (short hitches the first time only). On: they are also prepared behind the game while you play, which costs some fps for a while.", "" },
         // (Mako) AMD FSR Redstone frame generation (gpu/vk/vk_redstone.h), off unless switched on: it takes video memory
         new[] { "RX_VK_REDSTONE", "1", "AMD FSR Redstone frame generation (RX 9000)", "AMD's AI frame generation instead of Mako's: cleaner motion, steady HUD. Needs an RX 9000, AMD's files (FSR tab), FSR 4 and Frame generation 2x. Best with 12 GB+.", "" },
     };
