@@ -1198,7 +1198,11 @@ public partial class MainWindow : Window
                     File.Exists(System.IO.Path.Combine(Storage.NgxSdk, "LICENSE.txt")));
         // (prepareNow: the saved choice, read in BeginUpdate. The launcher's Update and the --update start after a self-update never
         // ran ApplySettings, so the tick there is only its default)
-        Run(tools, ShaderStep.Args(new List<string> { "--update", folder }, prepareNow), keepRows: true, dlss: dlss);
+        // (Mako 3.3.1: AMD FSR 4 too, by the saved tick or its default (on). Before, an update kept FSR 4 only for a folder already
+        // built with it (make_game.py's .hookshot_fsr mark), which no 3.0.x folder was: every 3.0 -> 3.3 update was built without it)
+        var args = new List<string> { "--update", folder };
+        if (BuilderSettings.Load(SettingsPath)?.Fsr ?? true) args.Add("--fsr");
+        Run(tools, ShaderStep.Args(args, prepareNow), keepRows: true, dlss: dlss);
     }
 
     // ================= the window =================
