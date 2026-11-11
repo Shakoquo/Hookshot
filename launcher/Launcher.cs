@@ -22,6 +22,74 @@ using System.Windows.Forms;
 [assembly: System.Reflection.AssemblyCompany("sharkiix")]
 [assembly: System.Reflection.AssemblyVersion("3.3.0.0")]
 
+// (Mako) AMD's FSR files, from AMD's own repository (FidelityFX SDK v2.4.0, Kits/FidelityFX/signedbin): name, what it is, size
+static class Fsr {
+    public const string Base = "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.4.0/Kits/FidelityFX/signedbin/";
+    public const string Page = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK";
+    public static readonly string[][] Files = {
+        new[] { "amd_fidelityfx_loader_vk.dll", "AMD FSR loader", "39184" },
+        new[] { "amd_fidelityfx_upscaler_vk.dll", "AMD FSR 4 upscaling", "36135696" },
+        new[] { "amd_fidelityfx_framegeneration_vk.dll", "AMD FSR frame generation (RX 9000)", "36806928" },
+    };
+    static string gpu;
+    /// the display adapter's name, a Radeon first (the registry's display class: no WMI)
+    public static string Gpu() {
+        if (gpu != null) return gpu;
+        gpu = "";
+        try {
+            using (var cls = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}")) {
+                if (cls != null)
+                    foreach (string k in cls.GetSubKeyNames()) {
+                        if (k.Length != 4) continue;
+                        try {
+                            using (var a = cls.OpenSubKey(k)) {
+                                string d = a == null ? null : a.GetValue("DriverDesc") as string;
+                                if (string.IsNullOrEmpty(d)) continue;
+                                if (gpu.Length == 0 || (d.Contains("Radeon") && !gpu.Contains("Radeon"))) gpu = d;
+                            }
+                        } catch { }
+                    }
+            }
+        } catch { }
+        return gpu;
+    }
+    /// 2: Radeon RX 9000 (FSR 4 + frame generation), 1: Radeon RX 6000 / 7000 (FSR 4), 0: other
+    public static int Tier(string name) {
+        if (name.IndexOf("Radeon", StringComparison.OrdinalIgnoreCase) < 0) return 0;
+        var m = Regex.Match(name, @"RX\s*(\d)\d{3}", RegexOptions.IgnoreCase);
+        if (!m.Success) return 0;
+        int series = m.Groups[1].Value[0] - '0';
+        return series >= 9 ? 2 : series >= 6 ? 1 : 0;
+    }
+
+    [DllImport("wintrust.dll", CharSet = CharSet.Unicode)]
+    static extern int WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid action, ref WinTrustData data);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WinTrustFileInfo { public uint Size; public string Path; public IntPtr File; public IntPtr Subject; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WinTrustData {
+        public uint Size; public IntPtr Policy; public IntPtr SipData; public uint UiChoice; public uint RevocationChecks; public uint UnionChoice;
+        public IntPtr FileInfo; public uint StateAction; public IntPtr StateData; public string UrlReference; public uint ProvFlags; public uint UiContext;
+        public IntPtr SignatureSettings;
+    }
+    /// a valid Authenticode signature whose signer is AMD
+    public static bool SignedByAmd(string path) {
+        try {
+            var cert = System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(path);
+            if (cert.Subject.IndexOf("Advanced Micro Devices", StringComparison.OrdinalIgnoreCase) < 0) return false;
+        } catch { return false; }
+        var fi = new WinTrustFileInfo { Size = (uint)Marshal.SizeOf(typeof(WinTrustFileInfo)), Path = path };
+        IntPtr pfi = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(WinTrustFileInfo)));
+        try {
+            Marshal.StructureToPtr(fi, pfi, false);
+            var d = new WinTrustData { Size = (uint)Marshal.SizeOf(typeof(WinTrustData)), UiChoice = 2, RevocationChecks = 0, UnionChoice = 1,
+                                       FileInfo = pfi, StateAction = 0, ProvFlags = 0x80 };
+            var action = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");   // (WINTRUST_ACTION_GENERIC_VERIFY_V2)
+            return WinVerifyTrust(new IntPtr(-1), action, ref d) == 0;
+        } finally { Marshal.DestroyStructure(pfi, typeof(WinTrustFileInfo)); Marshal.FreeHGlobal(pfi); }
+    }
+}
+
 static class Fork {
     public const string Name = "Mako";
     // (the update check compares the first number of the tags: the first Mako release must be numbered above amd-fix-2.1, or the
@@ -310,7 +378,8 @@ class LauncherForm : Form {
     readonly Dictionary<string, Toggle> fixes = new Dictionary<string, Toggle>();
     readonly List<TabW> tabs = new List<TabW>();
     Selector langSel;
-    Btn updateButton, playButton;
+    Btn updateButton, playButton, fsrButton;
+    string fsrLine = ""; Color fsrLineColor = Theme.Dim; bool fsrBusy;
     Image logo;
     Bitmap backdrop;
     readonly System.Windows.Forms.Timer timer;
@@ -436,7 +505,7 @@ class LauncherForm : Form {
                               Click = () => OpenUrl(Fork.Home) });
 
         // (tabs)
-        string[] names = { "Graphics", "Game", "Fixes", "About" };
+        string[] names = { "Graphics", "Game", "Fixes", "FSR", "About" };
         float tx = LeftW + 36;
         using (var g = CreateGraphics())
             for (int i = 0; i < names.Length; i++) {
@@ -461,8 +530,12 @@ class LauncherForm : Form {
             tg.Changed = t => { if (!loading) SaveEnv(); };
             fixes[tg.Key] = tg; widgets.Add(tg);
         }
-        widgets.Add(new Btn { Text = "Project page on GitHub", R = new RectangleF(cx, 470, 220, 40), Page = 3, Click = () => OpenUrl(Fork.Home) });
-        widgets.Add(new Btn { Text = "Licence (GPL-3)", R = new RectangleF(cx + 232, 470, 170, 40), Page = 3, Click = () => OpenUrl(Fork.Home + "/blob/HEAD/LICENSE") });
+        // (Mako) the FSR tab: AMD's files, fetched from AMD's own GitHub with one button (Fsr below)
+        fsrButton = new Btn { Text = "Download AMD FSR", Style = Btn.Kind.Primary, R = new RectangleF(cx, 470, 260, 44), Page = 3, Click = OnFsrDownload };
+        widgets.Add(fsrButton);
+        widgets.Add(new Btn { Text = "AMD FSR SDK on GitHub", R = new RectangleF(cx + 272, 470, 220, 44), Page = 3, Click = () => OpenUrl(Fsr.Page) });
+        widgets.Add(new Btn { Text = "Project page on GitHub", R = new RectangleF(cx, 470, 220, 40), Page = 4, Click = () => OpenUrl(Fork.Home) });
+        widgets.Add(new Btn { Text = "Licence (GPL-3)", R = new RectangleF(cx + 232, 470, 170, 40), Page = 4, Click = () => OpenUrl(Fork.Home + "/blob/HEAD/LICENSE") });
 
         // (bottom row: folders)
         widgets.Add(new Btn { Text = "Saves", R = new RectangleF(cx, 612, 130, 42), Click = () => OpenFolder(Path.Combine(dir, "user", "save")) });
@@ -680,7 +753,8 @@ class LauncherForm : Form {
         if (PageNow == 2)
             Theme.Text_(g, "Read by the game when it starts.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + Fixes.Length * 112, 500, 20),
                         StringAlignment.Near, StringAlignment.Near);
-        if (PageNow == 3) {
+        if (PageNow == 3) PaintFsr(g, x);
+        if (PageNow == 4) {
             var r = new RectangleF(x, 112, W - LeftW - 72, 340);
             using (var p = Theme.Round(r, 14)) {
                 using (var b = new SolidBrush(Theme.Card)) g.FillPath(b, p);
@@ -1111,6 +1185,93 @@ class LauncherForm : Form {
         } catch (Exception ex) { MessageBox.Show(this, ex.Message, Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
     void OpenUrl(string url) { try { Process.Start(url); } catch { } }
+
+    // ---- (Mako) the FSR tab ------------------------------------------------------------------------------------------------
+    // AMD's FSR files (loader, FSR 4 upscaler, FSR frame generation) are AMD's: Mako never ships them. The button fetches the
+    // signed ones from AMD's own repository (Fsr.Base), checks each is signed by AMD (Authenticode, Fsr.SignedByAmd) and puts
+    // them beside the game, where the game looks for them (gpu/vk/vk_fsr4.cpp).
+    void PaintFsr(Graphics g, float x) {
+        var r = new RectangleF(x, 112, W - LeftW - 72, 340);
+        using (var p = Theme.Round(r, 14)) {
+            using (var b = new SolidBrush(Theme.Card)) g.FillPath(b, p);
+            using (var pen = new Pen(Theme.Line)) g.DrawPath(pen, p);
+        }
+        Theme.Text_(g, "AMD FSR", Theme.Pick(22f, FontStyle.Bold, "Bahnschrift", "Segoe UI"), Color.White, new RectangleF(r.X + 24, r.Y + 16, 400, 30), StringAlignment.Near, StringAlignment.Near);
+        string gpu = Fsr.Gpu();
+        int tier = Fsr.Tier(gpu);
+        string what = tier == 2 ? "FSR 4 upscaling and FSR frame generation are made for this card."
+                    : tier == 1 ? "FSR 4 upscaling works on this card. FSR frame generation needs a Radeon RX 9000."
+                    : "FSR 4 needs an AMD Radeon RX 6000 or newer. FSR 3.1 works on every card without these files.";
+        Theme.Text_(g, "Graphics card: " + (gpu.Length > 0 ? gpu : "unknown"), Theme.Body, Theme.Cyan, new RectangleF(r.X + 24, r.Y + 52, r.Width - 48, 22), StringAlignment.Near, StringAlignment.Near);
+        Theme.Text_(g, what, Theme.Body, Theme.Text, new RectangleF(r.X + 24, r.Y + 76, r.Width - 48, 22), StringAlignment.Near, StringAlignment.Near);
+        float y = r.Y + 116;
+        foreach (var f in Fsr.Files) {
+            string path = Path.Combine(dir, f[0]);
+            bool have = File.Exists(path);
+            string ver = "";
+            if (have) try { ver = FileVersionInfo.GetVersionInfo(path).FileVersion ?? ""; } catch { }
+            using (var b = new SolidBrush(have ? Theme.Green : Theme.Amber)) g.FillEllipse(b, r.X + 26, y + 6, 9, 9);
+            Theme.Text_(g, f[1] + (have ? "  ·  installed" + (ver.Length > 0 ? " (" + ver.Trim() + ")" : "") : "  ·  missing"), Theme.Body,
+                        have ? Theme.Text : Theme.Dim, new RectangleF(r.X + 44, y, r.Width - 68, 22), StringAlignment.Near, StringAlignment.Near);
+            y += 28;
+        }
+        Theme.Text_(g, "One click: the files are downloaded from AMD's official GitHub (about 73 MB), checked (signed by AMD) and put in " +
+                    "the game folder. Then choose AMD FSR 4 as the Upscaler (Graphics tab, or in game with Insert).",
+                    Theme.Small, Theme.Dim, new RectangleF(r.X + 24, y + 10, r.Width - 48, 40), StringAlignment.Near, StringAlignment.Near);
+        Theme.Text_(g, fsrLine, Theme.Small, fsrLineColor, new RectangleF(r.X + 24, r.Bottom - 34, r.Width - 48, 22), StringAlignment.Near, StringAlignment.Near);
+    }
+
+    void OnFsrDownload() {
+        if (fsrBusy) return;
+        foreach (var pr in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(Fork.GameExe))) {
+            string exe = "";
+            try { exe = pr.MainModule.FileName; } catch { }
+            if (exe.Length > 0 && string.Equals(Path.GetDirectoryName(exe), dir, StringComparison.OrdinalIgnoreCase)) {
+                fsrLine = "Close the game first: its files are in use."; fsrLineColor = Theme.Amber; return;
+            }
+        }
+        fsrBusy = true; fsrButton.Enabled = false;
+        fsrLine = "Downloading..."; fsrLineColor = Theme.Cyan;
+        new Thread(() => {
+            string done;
+            Color col;
+            try {
+                long all = 0;
+                foreach (var f in Fsr.Files) all += long.Parse(f[2]);
+                long got = 0;
+                var tmp = new List<string>();
+                foreach (var f in Fsr.Files) {
+                    string part = Path.Combine(dir, f[0] + ".download");
+                    tmp.Add(part);
+                    using (var c = new WebClient()) {
+                        c.Headers[HttpRequestHeader.UserAgent] = "Mako-launcher";
+                        long before = got;
+                        var ev = new ManualResetEvent(false); Exception err = null;
+                        c.DownloadProgressChanged += (s, e) => {
+                            long now = before + e.BytesReceived;
+                            try { BeginInvoke((Action)(() => { fsrLine = "Downloading  " + (now >> 20) + " / " + (all >> 20) + " MB"; })); } catch { }
+                        };
+                        c.DownloadFileCompleted += (s, e) => { err = e.Error; ev.Set(); };
+                        c.DownloadFileAsync(new Uri(Fsr.Base + f[0]), part);
+                        ev.WaitOne();
+                        if (err != null) throw err;
+                    }
+                    got += new FileInfo(part).Length;
+                    if (!Fsr.SignedByAmd(part)) throw new Exception(f[0] + " is not signed by AMD: not installed");
+                }
+                for (int i = 0; i < Fsr.Files.Length; i++) {
+                    string target = Path.Combine(dir, Fsr.Files[i][0]);
+                    if (File.Exists(target)) File.Delete(target);
+                    File.Move(tmp[i], target);
+                }
+                done = "Done: AMD FSR is installed. Choose AMD FSR 4 as the Upscaler."; col = Theme.Green;
+            } catch (Exception ex) {
+                foreach (var f in Fsr.Files) try { File.Delete(Path.Combine(dir, f[0] + ".download")); } catch { }
+                done = "Could not install AMD FSR: " + ex.Message; col = Theme.Red;
+            }
+            try { BeginInvoke((Action)(() => { fsrLine = done; fsrLineColor = col; fsrBusy = false; fsrButton.Enabled = true; })); } catch { }
+        }) { IsBackground = true }.Start();
+    }
 
     void OnImport() {
         OpenFolder(Path.Combine(dir, "SAVE FOLDER"));
