@@ -796,8 +796,25 @@ def main():
         # new profile kept the hot code built from the old one)
         with open(PGO, "rb") as f:
             hot_fl = hot_fl + ["-fprofile-instr-use=" + PGO, "-DHOOKSHOT_PROFILE_SHA1=" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
+    # (Mako) the builder's fast build: the costliest chunks (about RX_FAST_SHARE of the lifted code) at -O0, which compiles them
+    # about three times sooner. Not all of them: every chunk at -O0 makes an exe over 2 GB, which Windows will not load
+    fast_fl, fast = [("-O0" if f == "-" + a.opt else f) for f in fl], set()
+    share = float(os.environ.get("RX_FAST_SHARE", "0") or 0)
+    if share > 0:
+        cold = [s for s in srcs if os.path.basename(s).startswith("code_") and not os.path.basename(s).startswith("code_hot")]
+        total, done = sum(os.path.getsize(s) for s in cold), 0
+        try:   # (the chunks the game runs least first, so the -O0 ones cost the fewest frames; others after, the costliest first)
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fast_order.txt")) as f:
+                order = {n.strip(): i for i, n in enumerate(l for l in f if l.strip() and not l.startswith("#"))}
+        except OSError:
+            order = {}
+        for s in sorted(cold, key=lambda s: (order.get(os.path.basename(s), len(order)), -compile_cost(s, costs))):
+            if done + os.path.getsize(s) > share * total:
+                continue
+            fast.add(s); done += os.path.getsize(s)
+        print("fast build: %d of %d chunks at -O0" % (len(fast), len(cold)), flush=True)
     jobs = [(cc, s, os.path.join(obj_dir, os.path.basename(s)[:-2] + ".o"),
-             hot_fl if os.path.basename(s).startswith("code_hot") else fl,
+             hot_fl if os.path.basename(s).startswith("code_hot") else (fast_fl if s in fast else fl),
              shim_deps if os.path.dirname(s) == NX2_RT else deps) for s in srcs]
     # (issue 624) what the game code's object keys are made of, as short fingerprints: two builds' logs side by side say which part
     # changed when an update compiled everything again (the headers, the flags, the profile, or the lifted code itself)

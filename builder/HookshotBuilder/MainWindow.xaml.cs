@@ -264,6 +264,7 @@ public partial class MainWindow : Window
         if (!string.IsNullOrEmpty(s.Out)) OutPath.Text = s.Out;
         DlssTick.IsChecked = s.Dlss;
         FsrTick.IsChecked = s.Fsr;
+        FastTick.IsChecked = s.Fast;
         if (s.Romfs != null && s.Exefs != null && Directory.Exists(s.Romfs) && File.Exists(System.IO.Path.Combine(s.Exefs, "main")))
         {
             romfs = s.Romfs;
@@ -287,6 +288,7 @@ public partial class MainWindow : Window
         {
             var s = new BuilderSettings { Out = OutPath.Text, Nup = romfs == null ? chosenNup : null, Romfs = romfs, Exefs = exefs,
                                           Dlss = DlssTick.IsChecked == true, Fsr = FsrTick.IsChecked == true,
+                                          Fast = FastTick.IsChecked == true,
                                           PrepareLater = PrepareTick.IsChecked != true };
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsPath)!);
             File.WriteAllText(SettingsPath, System.Text.Json.JsonSerializer.Serialize(s));
@@ -689,6 +691,7 @@ public partial class MainWindow : Window
         else return;
         args.AddRange(new[] { "--out", OutPath.Text, "--language", lang.Code });
         if (FsrTick.IsChecked == true) args.Add("--fsr");   // (an --update of the folder keeps it: make_game.py's mark)
+        if (FastTick.IsChecked == true) args.Add("--fast");   // (Mako: the same, make_game.py's .hookshot_fast mark)
         prepareNow = PrepareTick.IsChecked == true;
         Run(tools, ShaderStep.Args(args, prepareNow), dlss: DlssTick.IsChecked == true);
     }
@@ -1204,6 +1207,8 @@ public partial class MainWindow : Window
         // built with it (make_game.py's .hookshot_fsr mark), which no 3.0.x folder was: every 3.0 -> 3.3 update was built without it)
         var args = new List<string> { "--update", folder };
         if (BuilderSettings.Load(SettingsPath)?.Fsr ?? true) args.Add("--fsr");
+        // (Mako: the fast build as last chosen; no saved choice: the folder's mark decides, as it was built)
+        if (BuilderSettings.Load(SettingsPath) is { } saved) args.Add(saved.Fast ? "--fast" : "--no-fast");
         Run(tools, ShaderStep.Args(args, prepareNow), keepRows: true, dlss: dlss);
     }
 
