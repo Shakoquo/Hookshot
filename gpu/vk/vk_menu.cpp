@@ -365,7 +365,7 @@ const char* tx_text_speed(int v) {
 }
 const char* tx_ultrawide(int v) { return v ? "Monitor's shape" : "16:9"; }
 const char* tx_prompts(int v) {
-    static const char* t[HOS_PROMPT_N + 1] = {"Auto", "Switch", "Xbox", "PlayStation 4", "PlayStation 5", "Steam Deck"};
+    static const char* t[HOS_PROMPT_N + 1] = {"Auto", "Switch", "Xbox", "PlayStation 4", "PlayStation 5", "Steam Deck", "Steam Controller"};
     return t[std::min(std::max(v, 0), (int)HOS_PROMPT_N)];
 }
 const char* tx_gpu(int v) {
@@ -1164,7 +1164,9 @@ const char* pad_name(int p) {
         {"Cross", "Circle", "Square", "Triangle", "Create", "PS", "Options", "L3", "R3", "L1", "R1", "D-pad up", "D-pad down",
          "D-pad left", "D-pad right", "L2", "R2"},
         {"A", "B", "X", "Y", "View", "Steam", "Menu", "L3", "R3", "L1", "R1", "D-pad up", "D-pad down", "D-pad left",
-         "D-pad right", "L2", "R2"}};
+         "D-pad right", "L2", "R2"},
+        {"A", "B", "X", "Y", "View", "Steam", "Menu", "L3", "R3", "LB", "RB", "D-pad up", "D-pad down", "D-pad left",
+         "D-pad right", "LT", "RT"}};
     const int face = opts.prompts ? opts.prompts - 1 : host && host->prompt_face ? host->prompt_face() : -1;
     return p >= 0 && p < HOS_PAD_N ? t[face >= 0 && face < HOS_PROMPT_N ? face + 1 : 0][p] : "None";
 }
