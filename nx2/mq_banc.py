@@ -106,6 +106,11 @@ BOSSES = [
     ("Enemy_DungeonBoss_Barinade", 15, 23),
 ]
 
+# (Mako) Master Quest's new games start with these game data flags set (GameData/GameDataList: the Bool's DefaultValue, in
+# place). HavePlayedGetEvent.Obj_Rupee_Green: the first green rupee picked up has no "you got" show (Link holding it up), as if
+# known already. (Chests play their show anyway: the map/compass chests' rupee keeps its "......a rupee?")
+GAMEDATA_TRUE = ["HavePlayedGetEvent.Obj_Rupee_Green"]
+
 
 def zs_dictionary(romfs, want):
     import zstandard
@@ -331,6 +336,71 @@ def build_bosses(romfs, out, log=print):
     return done
 
 
+def mm3(s, seed=0):   # (murmur3 x86 32: the game data names' hash)
+    data = s.encode()
+    m = 0xFFFFFFFF
+    rotl = lambda x, r: ((x << r) | (x >> (32 - r))) & m
+    h, n = seed, len(data) // 4
+    for i in range(n):
+        k = rotl((struct.unpack_from("<I", data, 4 * i)[0] * 0xCC9E2D51) & m, 15) * 0x1B873593 & m
+        h = (rotl(h ^ k, 13) * 5 + 0xE6546B64) & m
+    t, k = data[4 * n:], 0
+    for i in reversed(range(len(t))):
+        k = (k << 8) | t[i]
+    if t:
+        h ^= rotl((k * 0xCC9E2D51) & m, 15) * 0x1B873593 & m
+    h ^= len(data)
+    h = ((h ^ (h >> 16)) * 0x85EBCA6B) & m
+    h = ((h ^ (h >> 13)) * 0xC2B2AE35) & m
+    return h ^ (h >> 16)
+
+
+def build_gamedata(romfs, out, log=print):
+    """GAMEDATA_TRUE's Bools made true by default in GameDataList (big endian BYML: in each Bool's dictionary, the Hash entry,
+    then the DefaultValue entry before it, its value 0 -> 1: same size)"""
+    import zstandard
+    name = "GameDataList.Product.110.byml.zs"
+    src = os.path.join(romfs, "GameData", name)
+    dst = os.path.join(out, "mq", "gamedata", name.lower())
+    if os.path.exists(dst):
+        os.remove(dst)
+    if not os.path.exists(src):
+        log(f"master quest: no {src}: left as it is")
+        return 0
+    d = zstandard.ZstdDecompressor(dict_data=zstandard.ZstdCompressionDict(zs_dictionary(romfs, b"zs.zsdic")))
+    with open(src, "rb") as f:
+        b = bytearray(d.decompressobj().decompress(f.read()))
+    if b[:2] != b"BY":
+        log("master quest: GameDataList is not big endian BYML: left as it is")
+        return 0
+    kt = struct.unpack_from(">I", b, 4)[0]
+    nk = struct.unpack_from(">I", b, kt)[0] & 0xFFFFFF
+    keys = [bytes(b[kt + struct.unpack_from(">I", b, kt + 4 + 4 * i)[0]:b.index(b"\0", kt + struct.unpack_from(">I", b, kt + 4 + 4 * i)[0])]).decode()
+            for i in range(nk)]
+    kh, kd = keys.index("Hash"), keys.index("DefaultValue")
+    done = 0
+    for flag in GAMEDATA_TRUE:
+        pat = struct.pack(">II", (kh << 8) | 0xD3, mm3(flag))
+        hits = []
+        at = b.find(pat)
+        while at >= 0:
+            for back in range(8, 8 * 6, 8):   # (DefaultValue sorts before Hash: an earlier entry of the same dictionary)
+                if struct.unpack_from(">I", b, at - back)[0] == (kd << 8) | 0xD0:
+                    hits.append(at - back + 4)
+                    break
+            at = b.find(pat, at + 1)
+        if len(hits) != 1:
+            log(f"master quest: game data {flag}: {len(hits)} Bools found, not 1: left as it is")
+            continue
+        struct.pack_into(">I", b, hits[0], 1)
+        done += 1
+    if done:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        write_raw_zstd(dst, bytes(b))
+    log(f"master quest: {done} of {len(GAMEDATA_TRUE)} game data flags true at the start")
+    return done
+
+
 def rename(b, file, old, new, log):   # (a value string of the file's table renamed in place, NULs after it: every value naming it)
     y = Byml(b)
     if old not in y.strs:
@@ -380,6 +450,7 @@ def build(romfs, out, log=print):
     log(f"master quest: {total} dungeon changes ({len(CHANGES)} listed, the maps and compasses)")
     build_bosses(romfs, out, log)
     build_texts(romfs, out, log)
+    build_gamedata(romfs, out, log)
     return total
 
 
