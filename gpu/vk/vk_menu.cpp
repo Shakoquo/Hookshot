@@ -1290,7 +1290,7 @@ void save() {
             const char* eq = strchr(line, '=');
             if (!eq || eq == line) continue;
             const std::string key(line, (size_t)(eq - line));
-            bool mine = key == "microphone_device" || key == "options_version";
+            bool mine = key == "microphone_device" || key == "options_version" || key == "memory_budget";   // (Mako: memory_budget was kept AND written again: one more line each save)
             for (const Row& r : rows)
                 if (!mine && r.value && key == ini_key(r)) mine = true;
             if (!mine) others += line, others += others.back() == '\n' ? "" : "\n";

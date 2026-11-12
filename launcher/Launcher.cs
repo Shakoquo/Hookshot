@@ -525,6 +525,11 @@ class LauncherForm : Form {
             "How fast the dialogue text appears." },
         new object[] { "controller_in_background", "Controller in background", new[] { "Off", "On" }, new[] { 0, 1 },
             "Keeps the controller working when the game window is not in front." },
+        // (Mako) Master Quest (host/master_quest.c): its title logo (prompts/mq, nx2/mq_logo.py) and the damage Link takes
+        new object[] { "master_quest", "Master Quest", new[] { "Off", "On" }, new[] { 0, 1 },
+            "Master Quest mode: the Master Quest title logo, and enemies that hit harder. Applies at the next start. Best on a new save." },
+        new object[] { "master_quest_damage", "Master Quest damage", new[] { "x2 (3DS)", "x3", "x4" }, new[] { 2, 3, 4 },
+            "How much harder enemies, falls and hazards hit in Master Quest. The 3DS Master Quest uses x2." },
     };
     static readonly string[] PresetKeys = { "resolution", "upscaling", "sharpness", "frame_pacing", "game_speed", "handheld_profile" };   // (as the game's presets: frame generation is the player's)
     static readonly string[][] Languages = {
@@ -605,7 +610,7 @@ class LauncherForm : Form {
         for (int i = 0; i < Languages.Length; i++) { langItems[i] = Languages[i][1]; langValues[i] = i; }
         langSel = new Selector { Key = "language", Label = "Language", Items = langItems, Values = langValues, Page = 2, Index = 0,
                                  HelpText = "The game's language: text and voices.",
-                                 R = new RectangleF(cx + colW + 14, 112 + 70, colW, 62) };
+                                 R = new RectangleF(cx + GameRows.Length % 2 * (colW + 14), 112 + GameRows.Length / 2 * 70, colW, 62) };   // (after the Game rows)
         langSel.Changed = s => { if (!loading) SaveLanguage(); };
         widgets.Add(langSel);
         for (int i = 0; i < Fixes.Length; i++) {
@@ -838,7 +843,7 @@ class LauncherForm : Form {
         float x = LeftW + 36;
         if (PageNow == 0) PaintRecommended(g, x);
         if (PageNow == 2)
-            Theme.Text_(g, "Controls are set in game: press Insert for the menu.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + 2 * 70 + 6, 500, 20),
+            Theme.Text_(g, "Controls are set in game: press Insert for the menu.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + (GameRows.Length + 2) / 2 * 70 + 6, 500, 20),
                         StringAlignment.Near, StringAlignment.Near);
         if (PageNow == 3)
             Theme.Text_(g, "Read by the game when it starts.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + Fixes.Length * 92, 500, 20),
@@ -929,7 +934,8 @@ class LauncherForm : Form {
         // (the game's own defaults where the file has nothing yet: options.ini is written by the game's Insert menu)
         var defaults = new Dictionary<string, int> { { "quality_preset", 0 }, { "output_res", 0 }, { "resolution", 0 }, { "upscaling", 2 }, { "sharpness", 30 },
             { "frame_generation", 0 }, { "frame_pacing", 1 }, { "vsync", 0 }, { "fullscreen", 1 }, { "ultrawide", 0 }, { "handheld_profile", 0 },
-            { "fps_counter", 0 }, { "dlss", 0 }, { "frame_rate_cap", 0 }, { "amd_anti-lag_2", 0 }, { "game_speed", 1 }, { "text_speed", 0 }, { "controller_in_background", 0 } };
+            { "fps_counter", 0 }, { "dlss", 0 }, { "frame_rate_cap", 0 }, { "amd_anti-lag_2", 0 }, { "game_speed", 1 }, { "text_speed", 0 }, { "controller_in_background", 0 },
+            { "master_quest", 0 }, { "master_quest_damage", 2 } };
         foreach (var kv in defaults) SetSetting(kv.Key, o.ContainsKey(kv.Key) ? o[kv.Key] : kv.Value);
         var env = ReadEnv();
         foreach (var f in Fixes) {
