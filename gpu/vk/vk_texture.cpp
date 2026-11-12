@@ -277,8 +277,9 @@ std::mutex pool_mu;
 std::unordered_map<uint64_t, std::vector<Pooled>> target_pool;   // by pool_key_of
 uint64_t pool_bytes, pool_n, st_pool_reused, st_pool_made, st_pool_destroyed;
 bool pool_pressed;   // (VRAM near what the driver allows: texture_frame's budget)
-bool compact_on() {   // (hookshot, RX_VK_COMPACT=1: the textures in a pool of their own, compacted: compact_step)
-    static const bool v = getenv("RX_VK_COMPACT") && atoi(getenv("RX_VK_COMPACT")) != 0;
+bool compact_on() {   // (hookshot, RX_VK_COMPACT: the textures in a pool of their own, compacted: compact_step. Mako 3.5: on unless RX_VK_COMPACT=0;
+    // off, the budget counted free space in every block as room for textures and VRAM climbed to the driver's limit, a freeze)
+    static const bool v = !getenv("RX_VK_COMPACT") || atoi(getenv("RX_VK_COMPACT")) != 0;
     return v;
 }
 uint64_t pool_cap() {
@@ -3494,7 +3495,7 @@ VkBufferView texel_buffer_view(const nvn_tex* t, const nvn_view* v, bool storage
     return view;
 }
 
-// ---- (hookshot) VRAM compacted (RX_VK_COMPACT=1; off by default) ----
+// ---- (hookshot) VRAM compacted (on by default since Mako 3.5; RX_VK_COMPACT=0 turns it off) ----
 // An evicted texture's memory stays inside its 128 MB block, and the driver counts the block whole: after some play 0.6 to
 // 1.6 GB of what the driver counts is such free space (3 to 4 GB after the cache was emptied), and evicting more gives
 // none of it back. With RX_VK_COMPACT=1 the textures that are not render targets have a pool of their own (vk_vma.cpp; the targets have theirs) and, when RX_VK_COMPACT_MB (512)
