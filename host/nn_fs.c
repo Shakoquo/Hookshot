@@ -250,23 +250,25 @@ static int user_mount(const char *name, const char *sub) {
     return mount(name, root, 1);
 }
 
+const char *hos_save_dir(void);   /* (Mako) master_quest.c: "save", or "save_mq" in Master Quest */
+
 /* nn::fs::IsSaveDataExisting(ApplicationId, account::Uid const&) -> bool */
 HLE(_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE) {
     char root[HOS_FS_PATH];
-    snprintf(root, sizeof root, "%s\\save\\%016llx%016llx", hos_user_dir, (unsigned long long)G64(ARG(1) + 8),
+    snprintf(root, sizeof root, "%s\\%s\\%016llx%016llx", hos_user_dir, hos_save_dir(), (unsigned long long)G64(ARG(1) + 8),
              (unsigned long long)G64(ARG(1)));
     RET(GetFileAttributesA(root) != INVALID_FILE_ATTRIBUTES);
 }
 /* MountSaveData(char const*, account::Uid const&) */
 HLE(_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE) {
     char sub[64];
-    snprintf(sub, sizeof sub, "save\\%016llx%016llx", (unsigned long long)G64(ARG(1) + 8), (unsigned long long)G64(ARG(1)));
+    snprintf(sub, sizeof sub, "%s\\%016llx%016llx", hos_save_dir(), (unsigned long long)G64(ARG(1) + 8), (unsigned long long)G64(ARG(1)));
     RET(user_mount(gstr(ARG(0)), sub) ? 0 : R_NOT_MOUNTED);
 }
 /* MountSaveDataReadOnly(char const*, ApplicationId, account::Uid const&) */
 HLE(_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_13ApplicationIdERKNS_7account3UidE) {
     char sub[64];
-    snprintf(sub, sizeof sub, "save\\%016llx%016llx", (unsigned long long)G64(ARG(2) + 8), (unsigned long long)G64(ARG(2)));
+    snprintf(sub, sizeof sub, "%s\\%016llx%016llx", hos_save_dir(), (unsigned long long)G64(ARG(2) + 8), (unsigned long long)G64(ARG(2)));
     RET(user_mount(gstr(ARG(0)), sub) ? 0 : R_NOT_MOUNTED);
 }
 HLE(_ZN2nn2fs21MountTemporaryStorageEPKc) { RET(user_mount(gstr(ARG(0)), "temp") ? 0 : R_NOT_MOUNTED); }

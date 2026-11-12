@@ -198,6 +198,8 @@ def build(romfs, out, dictionary=None, common=None, log=print):
             title_layers[name] = new_glow(pa.decode(title, ttex[name]), [(logo, mq_logo), (text, mq_text)])
     d = os.path.join(out, "mq")
     os.makedirs(d, exist_ok=True)
+    # (the launcher's Master Quest page shows it: made here from the player's own files, never shipped)
+    mq_logo.resize((LOGO_SIZE[0] // 2, LOGO_SIZE[1] // 2), Image.LANCZOS).save(os.path.join(d, "logo.png"))
     with open(os.path.join(d, "Title.bntx"), "wb") as f:
         f.write(title)
     pa.write_textures(os.path.join(d, "title.bin"), [(0xFF, 0, [r for n, im in title_layers.items()

@@ -390,6 +390,7 @@ static int sf_copy(const char *from, const char *to) {
     return ok;
 }
 /* a folder holding slot_XX folders with a progress.sav in them */
+const char *hos_save_dir(void);   /* (Mako) master_quest.c: "save", or "save_mq" in Master Quest */
 static int sf_is_save_root(const char *dir) {
     char pattern[MAX_PATH];
     snprintf(pattern, sizeof pattern, "%s\\slot_*", dir);
@@ -462,9 +463,9 @@ static void save_folder_import(const char *game_dir, const char *user_dir) {
     char stamp[64], target[MAX_PATH], backup[MAX_PATH], done[MAX_PATH];
     snprintf(stamp, sizeof stamp, "%04d-%02d-%02d %02dh%02d-%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
     CreateDirectoryA(user_dir, NULL);
-    snprintf(target, sizeof target, "%s\\save", user_dir);
+    snprintf(target, sizeof target, "%s\\%s", user_dir, hos_save_dir());
     CreateDirectoryA(target, NULL);
-    snprintf(target, sizeof target, "%s\\save\\5a3c9e1f0b7d24680000000000000001", user_dir);
+    snprintf(target, sizeof target, "%s\\%s\\5a3c9e1f0b7d24680000000000000001", user_dir, hos_save_dir());
     snprintf(backup, sizeof backup, "%s\\_backup %s", sf, stamp);
     if (sf_is_dir(target) && !sf_copy(target, backup)) {
         hos_log("save folder: the saves could not be backed up into %s: nothing imported", backup);

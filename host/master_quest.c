@@ -47,6 +47,9 @@ int hos_master_quest(void) {
     return (int)mq_on;
 }
 
+/* The saves' folder under user\: Master Quest has its own (save_mq), never mixed with the normal game's (save) */
+const char *hos_save_dir(void) { return hos_master_quest() ? "save_mq" : "save"; }
+
 /* nx2/oot_patches.py patch_life: Link's life going from old to new (a hit, a fall, lava...), the value to write instead: the
    hearts cheat keeps it, Master Quest multiplies the loss. Retried compare-and-swaps come back with the fresh old value, so a
    loss is multiplied once */
