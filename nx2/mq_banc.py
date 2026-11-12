@@ -113,6 +113,13 @@ PACK_INTS = [
      "BuyingPrice", 40, 55),
 ]
 
+# (Mako) integers of RSDB tables' rows, in place: (table, __RowId, key, the game's value, Master Quest's). The shop shows and
+# takes the price of PouchActorInfo's row, not the actor pack's PriceParam (the user saw 40 with only PACK_INTS)
+RSDB_INTS = [
+    ("PouchActorInfo", "Shop_Weapon_Shield_Deku", "BuyingPrice", 40, 55),
+    ("PouchActorInfo", "Weapon_Shield_Deku", "BuyingPrice", 40, 55),   # (the shop item's name actor: in case its row is used)
+]
+
 # (Mako) Master Quest's new games start with these game data flags set (GameData/GameDataList: the Bool's DefaultValue, in
 # place). HavePlayedGetEvent.Obj_Rupee_Green: the first green rupee picked up has no "you got" show (Link holding it up), as if
 # known already. (Chests play their show anyway: the map/compass chests' rupee keeps its "......a rupee?")
@@ -357,6 +364,53 @@ def build_bosses(romfs, out, log=print):
     return done
 
 
+def build_rsdb(romfs, out, log=print):
+    """RSDB_INTS: an integer of a row of an RSDB table (RSDB/<table>.Product.111.rstbl.byml.zs: an array of dictionaries, each
+    with its __RowId), in place: same size"""
+    import zstandard
+    d = zstandard.ZstdDecompressor(dict_data=zstandard.ZstdCompressionDict(zs_dictionary(romfs, b"zs.zsdic")))
+    tables = {}
+    for table, row, key, old, new in RSDB_INTS:
+        tables.setdefault(table, []).append((row, key, old, new))
+    done = 0
+    for table, changes in tables.items():
+        name = table + ".Product.111.rstbl.byml.zs"
+        src = os.path.join(romfs, "RSDB", name)
+        dst = os.path.join(out, "mq", "rsdb", name.lower())
+        if os.path.exists(dst):
+            os.remove(dst)
+        if not os.path.exists(src):
+            log(f"master quest: no {src}: left as it is")
+            continue
+        with open(src, "rb") as f:
+            b = bytearray(d.decompressobj().decompress(f.read()))
+        y = Byml(bytes(b))
+        o = y.root
+        assert y.b[o] == 0xC0
+        n = y.u32(o) >> 8
+        vo = o + 4 + ((n + 3) & ~3)
+        rows = {}
+        for i in range(n):
+            r = y.u32(vo + 4 * i)
+            got = y.dict_slot(r, "__RowId") if y.b[r] == 0xC1 else None
+            if got and got[0] == 0xA0:
+                rows[y.strs[y.u32(got[1])]] = r
+        k = 0
+        for row, key, old, new in changes:
+            got = y.dict_slot(rows[row], key) if row in rows else None
+            if got is None or got[0] != 0xD1 or y.u32(got[1]) != old:
+                log(f"master quest: {table} {row}: {key} is not {old}: left as it is")
+                continue
+            struct.pack_into("<I", b, got[1], new)
+            k += 1
+        if k:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            write_raw_zstd(dst, bytes(b))
+        done += k
+    log(f"master quest: {done} of {len(RSDB_INTS)} table values changed (prices)")
+    return done
+
+
 def mm3(s, seed=0):   # (murmur3 x86 32: the game data names' hash)
     data = s.encode()
     m = 0xFFFFFFFF
@@ -472,6 +526,7 @@ def build(romfs, out, log=print):
     build_bosses(romfs, out, log)
     build_texts(romfs, out, log)
     build_gamedata(romfs, out, log)
+    build_rsdb(romfs, out, log)
     return total
 
 

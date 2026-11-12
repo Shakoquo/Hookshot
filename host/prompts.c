@@ -565,9 +565,10 @@ int hos_prompts_romfs(const char *key, char *out, size_t cap) {
     }
     /* (Mako) the actor packs (nx2/mq_banc.py BOSSES: the bosses' life, PACK_INTS: the Deku Shield's price; only those in
        prompts/mq are served), the texts (mals/: the green rupee's "......a rupee?") and
-       the game data list (gamedata/: GAMEDATA_TRUE, the first green rupee's show already seen), served the same way */
+       the game data list (gamedata/: GAMEDATA_TRUE, the first green rupee's show already seen) and the RSDB tables (rsdb/:
+       RSDB_INTS, the shop's prices), served the same way */
     if (!strncmp(key, "banc/", 5) || !strncmp(key, "pack/actor/", 11) || !strncmp(key, "mals/", 5) ||
-        !strncmp(key, "gamedata/", 9)) {
+        !strncmp(key, "gamedata/", 9) || !strncmp(key, "rsdb/", 5)) {
         char dir[MAX_PATH];
         if (!hos_master_quest() || !game_dir(dir, sizeof dir)) return 0;
         snprintf(out, cap, "%sprompts/mq/%s", dir, key);
