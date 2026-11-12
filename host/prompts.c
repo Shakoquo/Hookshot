@@ -553,6 +553,17 @@ static int build(char *out, size_t cap) {
 /* mods.c: the file for a RomFS path the prompts replace (key: lower case, '/'), 1 with one. Asked only when no mod has
    the file: a mod's own wins */
 int hos_prompts_romfs(const char *key, char *out, size_t cap) {
+    /* (Mako) Master Quest's dungeons: prompts/mq/banc/<scene>/<file> (nx2/mq_banc.py: chests' contents, the bosses' hearts), in
+       place of the game's while Master Quest is on */
+    if (!strncmp(key, "banc/", 5)) {
+        char dir[MAX_PATH];
+        if (!hos_master_quest() || !game_dir(dir, sizeof dir)) return 0;
+        snprintf(out, cap, "%sprompts/mq/%s", dir, key);
+        if (GetFileAttributesA(out) == INVALID_FILE_ATTRIBUTES) return 0;
+        static volatile LONG told;
+        if (InterlockedIncrement(&told) <= 64) hos_log("master quest: %s", key);
+        return 1;
+    }
     static volatile LONG state[4];   /* the font, the textures, the layouts, the title: 0 not built, 1 being built, 2 built, 3 none */
     static char path[4][MAX_PATH];
     const size_t kn = strlen(key);
