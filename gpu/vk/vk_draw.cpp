@@ -2203,7 +2203,9 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
 /// optimizer, and the screen stayed black with the sound going, then a movie froze. Never on the recording thread now.)
 /// RX_VK_QUICK_MS=0: neither, as before §78
 bool quick_pipeline(PipeEntry& e, const Program& p, const NvnState& s, const Targets& at, VkPrimitiveTopology topo, bool must) {
-    static const double budget_ms = getenv("RX_VK_QUICK_MS") ? atof(getenv("RX_VK_QUICK_MS")) : 30.0;
+    // (OFF by default since 3.6.1: on the user's RX card, quick builds took 7-10 s too, the same pipeline was built up to 5 times at
+    // once beside the workers, and the game froze for good after Volvagia (§81). RX_VK_QUICK_MS=30 turns it on)
+    static const double budget_ms = getenv("RX_VK_QUICK_MS") ? atof(getenv("RX_VK_QUICK_MS")) : 0.0;
     if (budget_ms <= 0) return false;
     if (e.pipeline.load(std::memory_order_acquire)) return true;
     // (Mako §78b) the full one first, if a cache has it compiled (ours, the driver's). Once an entry
@@ -6401,7 +6403,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     // frame is held about that long at most (one build started may finish past it), not the 0.2-3 s an area's first programs
     // froze it when every draw waited. Clean first, then fast: the user's call. 0: left out at once, as before
     const auto brief_wait = [&](const std::atomic<bool>& ready, const std::shared_ptr<JobClaim>* claim) {
-        static const double budget_ms = getenv("RX_VK_PIPE_WAIT_MS") ? atof(getenv("RX_VK_PIPE_WAIT_MS")) : 100.0;
+        static const double budget_ms = getenv("RX_VK_PIPE_WAIT_MS") ? atof(getenv("RX_VK_PIPE_WAIT_MS")) : 0.0;   // (off by default since 3.6.1, §81)
         static thread_local uint64_t frame = ~0ull;
         static thread_local double used_ms = 0;
         if (budget_ms <= 0) return false;
