@@ -983,6 +983,8 @@ struct PipeEntry {
     std::atomic<bool> ready{false};
     std::atomic<VkPipeline> pipeline{VK_NULL_HANDLE};   // (a fast-linked one first, the worker's full build over it)
     std::shared_ptr<JobClaim> claim;   // (hookshot: its build, which a draw that must wait runs itself if no worker took it yet)
+    std::atomic<bool> asked{false};    // (Mako §78: the caches asked for the full one, quick_pipeline)
+    std::atomic<bool> waited{false};   // (Mako §78: a draw waited for its quick one once, quick_pipeline)
     std::atomic<bool> quick{false};    // (Mako §78: a quick one, without the driver's optimizer, being made or made: quick_pipeline)
 };
 std::unordered_map<uint64_t, std::unique_ptr<PipeEntry>> pipelines;   // (the replay thread's)
@@ -2193,55 +2195,85 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
     return pl;
 }
 
-/// (Mako §78) A pipeline made here, now, without the driver's optimizer, for a draw whose full build is not done: set as the
-/// entry's pipeline (not ready: the worker's build replaces it when done). At most RX_VK_QUICK_MS (1000) of them a frame on
-/// each recording thread; one another thread is making is not waited for. true: the entry has one to draw with
-/// must: a draw that cannot be left out (it would wait for the full build otherwise): no budget, and one another thread is making
-/// is waited for (a quick build: tens of ms)
+/// (Mako §78) For a draw whose pipeline's full build is not done: (1) the full one, if a cache holds it compiled (asked without
+/// compiling: a ms or two); (2) for a draw that may be left out, one made WITHOUT the driver's optimizer on a thread of its own,
+/// waited for at most RX_VK_QUICK_MS (30) a frame on each recording thread, then left out until it is there. The worker's full
+/// build replaces it when done. true: the entry has one to draw with. A draw that cannot be left out gets (1) only, then waits for
+/// the full build as before. (3.6 made the quick one on the recording thread, unbounded: on AMD some took 9-14 s even without the
+/// optimizer, and the screen stayed black with the sound going, then a movie froze. Never on the recording thread now.)
+/// RX_VK_QUICK_MS=0: neither, as before §78
 bool quick_pipeline(PipeEntry& e, const Program& p, const NvnState& s, const Targets& at, VkPrimitiveTopology topo, bool must) {
-    static const double budget_ms = getenv("RX_VK_QUICK_MS") ? atof(getenv("RX_VK_QUICK_MS")) : 1000.0;
-    static thread_local uint64_t frame = ~0ull;
-    static thread_local double used_ms = 0;
+    static const double budget_ms = getenv("RX_VK_QUICK_MS") ? atof(getenv("RX_VK_QUICK_MS")) : 30.0;
     if (budget_ms <= 0) return false;
-    const uint64_t f = texture_frame_no();
-    if (f != frame) frame = f, used_ms = 0;
-    if ((!must && used_ms >= budget_ms) || e.quick.exchange(true, std::memory_order_acq_rel)) {
-        if (must)   // (another thread's quick build: a few ms; the full one coming first ends the wait too)
-            for (int i = 0; i < 5000 && !e.pipeline.load(std::memory_order_acquire) && !e.ready.load(std::memory_order_acquire); i++)
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        return e.pipeline.load(std::memory_order_acquire) != VK_NULL_HANDLE;
-    }
-    const auto t0 = std::chrono::steady_clock::now();
-    // (Mako §78b) the full one first, if a cache has it compiled (ours, the driver's): asked without compiling, it comes back in a
-    // ms or two. Made without the optimizer at once, a pipeline the caches held was compiled anew each time, 50-300 ms apiece,
-    // 450 of them on a room's first frames with nothing ready yet (a test with every full build held 8 s): black for 20 s
-    {
+    if (e.pipeline.load(std::memory_order_acquire)) return true;
+    // (Mako §78b) the full one first, if a cache has it compiled (ours, the driver's). Once an entry
+    // (a test: RX_VK_TEST_NO_CACHE_ASK=1 skips it, as on a PC that never made these pipelines)
+    static const bool no_ask = getenv("RX_VK_TEST_NO_CACHE_ASK") != nullptr;
+    if (!no_ask && !e.asked.exchange(true, std::memory_order_acq_rel)) {
         bool cold = false;
         if (const VkPipeline full = build_graphics(p, s, at, topo, -1, &cold)) {
             VkPipeline none = VK_NULL_HANDLE;
-            if (!e.pipeline.compare_exchange_strong(none, full, std::memory_order_acq_rel)) {}   // (kept: draws may hold it)
+            e.pipeline.compare_exchange_strong(none, full, std::memory_order_acq_rel);   // (one already there is kept: draws may hold it)
             static std::atomic<int64_t> hits{0};
             const int64_t h = ++hits;
             if (h <= 5 || h % 200 == 0) logf("vk: pipeline from the caches for a draw ahead of its build (%lld so far)", (long long)h);
             return true;
         }
     }
-    quick_build = true;
-    const VkPipeline q = build_graphics(p, s, at, topo);
-    quick_build = false;
-    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    used_ms += ms;
-    static std::atomic<int64_t> n{0};
-    static std::atomic<int64_t> total_us{0};
-    const int64_t k = ++n;
-    total_us += (int64_t)(ms * 1000);
-    if (k <= 20 || k % 50 == 0)
-        logf("vk: quick pipeline (no optimizer) for %016llx in %.1f ms, drawn with until its full build is done (%lld so far, %.0f ms in all)",
-             (unsigned long long)p.key, ms, (long long)k, total_us.load() / 1000.0);
-    if (!q) return false;
-    VkPipeline none = VK_NULL_HANDLE;
-    e.pipeline.compare_exchange_strong(none, q, std::memory_order_acq_rel);   // (the full one may have come first: kept)
-    return true;
+    if (must) return false;
+    // (the quick one: on a thread of its own, two at a time at most; one not started now is started at a later draw)
+    static std::atomic<int> running{0};
+    if (!e.quick.load(std::memory_order_acquire) && running.load() < 2 && !e.quick.exchange(true, std::memory_order_acq_rel)) {
+        running++;
+        struct Q {
+            PipeEntry* e;
+            const Program* p;
+            NvnState s;
+            Targets at;
+            VkPrimitiveTopology topo;
+        };
+        auto q = std::make_shared<Q>(Q{&e, &p, s, at, topo});
+        std::thread([q] {
+            SetThreadDescription(GetCurrentThread(), L"mkw_vk quick pipeline");
+            ub_thread_off();
+            // (a test: RX_VK_TEST_QUICK_SLOW_MS=<ms> holds each quick build that long, as the 9-14 s ones AMD took)
+            static const int slow_ms = getenv("RX_VK_TEST_QUICK_SLOW_MS") ? atoi(getenv("RX_VK_TEST_QUICK_SLOW_MS")) : 0;
+            if (slow_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(slow_ms));
+            const auto t0 = std::chrono::steady_clock::now();
+            VkPipeline built = VK_NULL_HANDLE;
+            try {
+                quick_build = true;
+                built = build_graphics(*q->p, q->s, q->at, q->topo);
+            } catch (...) {
+            }
+            quick_build = false;
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            static std::atomic<int64_t> n{0};
+            const int64_t k = ++n;
+            if (k <= 20 || k % 50 == 0)
+                logf("vk: quick pipeline (no optimizer) for %016llx in %.1f ms, on its own thread (%lld so far)",
+                     (unsigned long long)q->p->key, ms, (long long)k);
+            if (built) {
+                VkPipeline none = VK_NULL_HANDLE;
+                q->e->pipeline.compare_exchange_strong(none, built, std::memory_order_acq_rel);   // (the full one first: kept)
+            }
+            running--;
+        }).detach();
+    }
+    // (waited for a little: most take 10-150 ms, so a boss is there within a few frames; the frame never waits longer)
+    static thread_local uint64_t frame = ~0ull;
+    static thread_local double used_ms = 0;
+    const uint64_t f = texture_frame_no();
+    if (f != frame) frame = f, used_ms = 0;
+    const auto t0 = std::chrono::steady_clock::now();
+    auto spent = [&] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); };
+    // (once an entry: one the quick thread takes long over (9-14 s seen on AMD) is left out at once on the frames after, not
+    // waited for again on each one: 30 ms a frame for 12 s was 25 fps through a cutscene in a test)
+    const double left = e.waited.exchange(true, std::memory_order_acq_rel) ? 0.0 : budget_ms - used_ms;
+    while (left > 0 && !e.pipeline.load(std::memory_order_acquire) && !e.ready.load(std::memory_order_acquire) && spent() < left)
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
+    used_ms += spent();
+    return e.pipeline.load(std::memory_order_acquire) != VK_NULL_HANDLE;
 }
 
 // ---- samplers (by NVN sampler parameters) ----
