@@ -106,6 +106,13 @@ BOSSES = [
     ("Enemy_DungeonBoss_Barinade", 15, 23),
 ]
 
+# (Mako) other integers of an actor pack's files, in place: (actor, file in its pack, key, the game's value, Master Quest's).
+# The Kokiri shop's Deku Shield: 40 -> 55 rupees (the shop's texts name no price: the price shown is this one)
+PACK_INTS = [
+    ("Shop_Weapon_Shield_Deku", "GameParameter/PriceParam/Shop_Weapon_Shield_Deku.game__pouchcontent__PriceParam.bgyml",
+     "BuyingPrice", 40, 55),
+]
+
 # (Mako) Master Quest's new games start with these game data flags set (GameData/GameDataList: the Bool's DefaultValue, in
 # place). HavePlayedGetEvent.Obj_Rupee_Green: the first green rupee picked up has no "you got" show (Link holding it up), as if
 # known already. (Chests play their show anyway: the map/compass chests' rupee keeps its "......a rupee?")
@@ -143,6 +150,8 @@ class Byml:
         return struct.unpack_from("<I", self.b, o)[0]
 
     def table(self, o):
+        if not o:   # (no table: a file without strings)
+            return []
         n = self.u32(o) >> 8
         out = []
         for i in range(n):
@@ -305,10 +314,17 @@ def sarc_files(b):   # (a SARC's files: name -> (start, end) in b)
 
 
 def build_bosses(romfs, out, log=print):
+    """PACK_INTS (and BOSSES' MaxLife): an integer of a file in an actor pack, in place (the pack keeps its size)"""
     import zstandard
     d = zstandard.ZstdDecompressor(dict_data=zstandard.ZstdCompressionDict(zs_dictionary(romfs, b"pack.zsdic")))
-    done = 0
+    edits = {}
     for actor, old, new in BOSSES:
+        edits.setdefault(actor, []).append((f"Life/LifeParameters/{actor}.game__life__LifeParameters.bgyml", "MaxLife", old, new))
+    for actor, file, key, old, new in PACK_INTS:
+        edits.setdefault(actor, []).append((file, key, old, new))
+    done = total = 0
+    for actor, changes in edits.items():
+        total += len(changes)
         src = os.path.join(romfs, "Pack", "Actor", actor + ".pack.zs")
         dst = os.path.join(out, "mq", "pack", "actor", (actor + ".pack.zs").lower())
         if os.path.exists(dst):
@@ -318,21 +334,26 @@ def build_bosses(romfs, out, log=print):
             continue
         with open(src, "rb") as f:
             b = bytearray(d.decompressobj().decompress(f.read()))
-        where = sarc_files(bytes(b)).get(f"Life/LifeParameters/{actor}.game__life__LifeParameters.bgyml")
-        if where is None:
-            log(f"master quest: {actor}: no life parameters: left as it is")
-            continue
-        s, e = where
-        y = Byml(bytes(b[s:e]))
-        got = y.dict_slot(y.root, "MaxLife")
-        if got is None or got[0] != 0xD1 or y.u32(got[1]) != old:
-            log(f"master quest: {actor}: MaxLife is not {old}: left as it is")
-            continue
-        struct.pack_into("<I", b, s + got[1], new)
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        write_raw_zstd(dst, bytes(b))
-        done += 1
-    log(f"master quest: {done} of {len(BOSSES)} bosses made tougher")
+        files = sarc_files(bytes(b))
+        n = 0
+        for file, key, old, new in changes:
+            where = files.get(file)
+            if where is None:
+                log(f"master quest: {actor}: no {file}: left as it is")
+                continue
+            s, e = where
+            y = Byml(bytes(b[s:e]))
+            got = y.dict_slot(y.root, key)
+            if got is None or got[0] != 0xD1 or y.u32(got[1]) != old:
+                log(f"master quest: {actor}: {key} is not {old}: left as it is")
+                continue
+            struct.pack_into("<I", b, s + got[1], new)
+            n += 1
+        if n:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            write_raw_zstd(dst, bytes(b))
+        done += n
+    log(f"master quest: {done} of {total} actor values changed (bosses' life, prices)")
     return done
 
 
