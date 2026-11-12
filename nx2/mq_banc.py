@@ -61,6 +61,27 @@ CHANGES = [
      "Item_Dungeon_Compass", "Item_Dungeon_Map"),
 ]
 
+# (Mako) no dungeon maps or compasses in Master Quest: their big chests give a green rupee (the string renamed in place in each
+# file that names them, every chest with it), and the rupee's line says "......a rupee?" (RUPEE_LINE, Mals/<language>)
+NO_MAPS = [
+    ("InsideTheDekuTree", "InsideTheDekuTree_Static.bcett.byml.zs"),
+    ("DodongoCavern", "DodongoCavern_Static.bcett.byml.zs"),
+    ("DodongoCavern", "DodongoCavern_Dynamic.bcett.byml.zs"),
+    ("InsideJabuJabuBelly", "InsideJabuJabuBelly_Static.bcett.byml.zs"),
+]
+NO_MAP_ITEM = "TBox_Rupee_Green"
+# (their chests' GetEventName: RSDB EventSetting entries of NaviChat (TreasureBoxDM_NaviChat_Deku_Map...), Navi on the map or the
+# compass. Jabu's compass chest keeps its own (TreasureBox_WithRuto_Room12: Ruto's, not the item's))
+NO_MAP_EVENTS = ("InsideTheDekuTree_GetMap", "InsideTheDekuTree_GetCompass", "DodongoCavern_GetMap", "DodongoCavern_GetCompass")
+RUPEE_LINE = {
+    "USen": "......a rupee?", "EUen": "......a rupee?",
+    "USfr": "......un rubis?", "EUfr": "......un rubis ?",
+    "USes": "......¿una rupia?", "EUes": "......¿una rupia?",
+    "EUde": "......ein Rubin?", "EUit": "......una rupia?", "EUnl": "......een rupee?",
+    "EUpl": "......rupia?", "EUru": "......рупия?", "USpt": "......uma rupia?",
+    "JPja": "……ルピー？", "KRko": "……루피?", "CNzh": "……卢比？", "TWzh": "……盧比？",
+}
+
 # (Mako) the bosses take more hits in Master Quest: their actor pack's MaxLife (Life/LifeParameters, an integer in place: the
 # pack keeps its size). (actor, the game's MaxLife, Master Quest's: about 1.5x)
 BOSSES = [
@@ -177,6 +198,71 @@ def write_raw_zstd(path, data):   # (as host/prompts.c write_zstd_raw: a frame o
                 break
 
 
+def msbt_text(b, label):   # (an MSBT's message: its (start, end) in b, end at its NUL; UTF-8 messages only)
+    if b[:8] != b"MsgStdBn" or b[0x0C] != 0:
+        return None
+    n = struct.unpack_from("<H", b, 0x0E)[0]
+    o, sec = 0x20, {}
+    for _ in range(n):
+        size = struct.unpack_from("<I", b, o + 4)[0]
+        sec[b[o:o + 4]] = (o + 0x10, size)
+        o = (o + 0x10 + size + 15) & ~15
+    if b"LBL1" not in sec or b"TXT2" not in sec:
+        return None
+    s, _ = sec[b"LBL1"]
+    idx = None
+    for i in range(struct.unpack_from("<I", b, s)[0]):
+        cnt, off = struct.unpack_from("<II", b, s + 4 + 8 * i)
+        p = s + off
+        for _ in range(cnt):
+            ln = b[p]
+            if b[p + 1:p + 1 + ln] == label.encode():
+                idx = struct.unpack_from("<I", b, p + 1 + ln)[0]
+            p += 1 + ln + 4
+    if idx is None:
+        return None
+    s, size = sec[b"TXT2"]
+    n = struct.unpack_from("<I", b, s)[0]
+    start = s + struct.unpack_from("<I", b, s + 4 + 4 * idx)[0]
+    end = s + (struct.unpack_from("<I", b, s + 8 + 4 * idx)[0] if idx + 1 < n else size)
+    return start, end - 1   # (the slot up to its last NUL: a message's tags may hold NULs of their own, the furigana's in Japanese)
+
+
+def build_texts(romfs, out, log=print):
+    """the green rupee's line under its "you got" (Obj_Rupee_Green_GetCaption) becomes "......a rupee?" in the game's language,
+    in place (NULs after it: the message file keeps its size): the maps' and compasses' big chests give one (NO_MAPS)"""
+    import zstandard
+    folder = os.path.join(romfs, "Mals")
+    if not os.path.isdir(folder):
+        return 0
+    d = zstandard.ZstdDecompressor(dict_data=zstandard.ZstdCompressionDict(zs_dictionary(romfs, b"zs.zsdic")))
+    done = 0
+    for name in sorted(os.listdir(folder)):
+        dst = os.path.join(out, "mq", "mals", name.lower())
+        if os.path.exists(dst):
+            os.remove(dst)
+        line = RUPEE_LINE.get(name[:4])
+        if not line or not name.endswith(".sarc.zs"):
+            continue
+        with open(os.path.join(folder, name), "rb") as f:
+            b = bytearray(d.decompressobj().decompress(f.read()))
+        where = sarc_files(bytes(b)).get("ActorMsg/PouchContent.msbt")
+        if where is None:
+            continue
+        s, e = where
+        got = msbt_text(bytes(b[s:e]), "Obj_Rupee_Green_GetCaption")
+        new = line.encode()
+        if got is None or len(new) > got[1] - got[0]:
+            log(f"master quest: {name}: the green rupee's line left as it is")
+            continue
+        b[s + got[0]:s + got[1]] = new.ljust(got[1] - got[0], b"\0")
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        write_raw_zstd(dst, bytes(b))
+        done += 1
+    log(f"master quest: the green rupee's surprise in {done} languages")
+    return done
+
+
 def sarc_files(b):   # (a SARC's files: name -> (start, end) in b)
     assert b[:4] == b"SARC"
     hl = struct.unpack_from("<H", b, 4)[0]
@@ -223,12 +309,29 @@ def build_bosses(romfs, out, log=print):
     return done
 
 
+def rename(b, file, old, new, log):   # (a value string of the file's table renamed in place, NULs after it: every value naming it)
+    y = Byml(b)
+    if old not in y.strs:
+        return b, 0
+    if len(new.encode()) > len(old.encode()):
+        log(f"master quest: {file}: {new} is longer than {old}: left as it is")
+        return b, 0
+    i = y.strs.index(old)
+    st = struct.unpack_from("<I", b, 8)[0]
+    at = st + y.u32(st + 4 + 4 * i)
+    b = bytearray(b)
+    b[at:at + len(old.encode())] = new.encode().ljust(len(old.encode()), b"\0")
+    return bytes(b), 1
+
+
 def build(romfs, out, log=print):
     import zstandard
     d = zstandard.ZstdDecompressor(dict_data=zstandard.ZstdCompressionDict(zs_dictionary(romfs, b"bcett.byml.zsdic")))
     files = {}
     for c in CHANGES:
         files.setdefault((c[0], c[1]), []).append(c)
+    for scene, file in NO_MAPS:
+        files.setdefault((scene, file), [])
     total = 0
     for (scene, file), changes in files.items():
         src = os.path.join(romfs, "Banc", scene, file)
@@ -238,6 +341,13 @@ def build(romfs, out, log=print):
         with open(src, "rb") as f:
             b = d.decompressobj().decompress(f.read())
         b2, done = apply(b, changes, log)
+        if (scene, file) in NO_MAPS:
+            for old in ("Item_Dungeon_Map", "Item_Dungeon_Compass"):
+                b2, n = rename(b2, file, old, NO_MAP_ITEM, log)
+                done += n
+            for old in NO_MAP_EVENTS:   # (Navi's talk about the map or the compass after the chest: none, the name made empty)
+                b2, n = rename(b2, file, old, "", log)
+                done += n
         dst = os.path.join(out, "mq", "banc", scene.lower(), file.lower())
         if done:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -245,8 +355,9 @@ def build(romfs, out, log=print):
         elif os.path.exists(dst):
             os.remove(dst)
         total += done
-    log(f"master quest: {total} of {len(CHANGES)} dungeon changes")
+    log(f"master quest: {total} dungeon changes ({len(CHANGES)} listed, the maps and compasses)")
     build_bosses(romfs, out, log)
+    build_texts(romfs, out, log)
     return total
 
 

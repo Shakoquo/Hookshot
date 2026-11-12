@@ -563,8 +563,9 @@ int hos_prompts_romfs(const char *key, char *out, size_t cap) {
         hos_log("master quest: the preview's end (the Zora's Sapphire scene)");
         return 0;
     }
-    /* (Mako) the bosses' actor packs (nx2/mq_banc.py BOSSES: more life), served the same way */
-    if (!strncmp(key, "banc/", 5) || !strncmp(key, "pack/actor/enemy_dungeonboss_", 29)) {
+    /* (Mako) the bosses' actor packs (nx2/mq_banc.py BOSSES: more life) and the texts (mals/: the green rupee's "......a rupee?"),
+       served the same way */
+    if (!strncmp(key, "banc/", 5) || !strncmp(key, "pack/actor/enemy_dungeonboss_", 29) || !strncmp(key, "mals/", 5)) {
         char dir[MAX_PATH];
         if (!hos_master_quest() || !game_dir(dir, sizeof dir)) return 0;
         snprintf(out, cap, "%sprompts/mq/%s", dir, key);
