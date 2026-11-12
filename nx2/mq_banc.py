@@ -39,6 +39,34 @@ CHANGES = [
      "Obj_Heart_Container", "Obj_Heart"),
     ("SpiritTemple", "SpiritTemple_Static.bcett.byml.zs", 4720088048159616469, ("Gyaml",),
      "Obj_Heart_Container", "Obj_Heart"),
+    # Dodongo's Cavern: the Bomb Bag in the Compass's big chest (first floor, the Armos room, reached before the upper floor and the
+    # skull's eyes that need bombs), the Compass up where the Bomb Bag was. The child has the Goron's Bracelet (the cavern's
+    # entrance), so the bomb flowers cover everything before it
+    ("DodongoCavern", "DodongoCavern_Static.bcett.byml.zs", 12161709650443144121, ("Dynamic", "Drop__DropActor"),
+     "Item_BombBag_Small", "Item_Dungeon_Compass"),
+    ("DodongoCavern", "DodongoCavern_Static.bcett.byml.zs", 12161709650443144121, ("Dynamic", "GetEventName"),
+     "Get_StoneOfFire_GetBombBag", "DodongoCavern_GetCompass"),
+    ("DodongoCavern", "DodongoCavern_Static.bcett.byml.zs", 17531994809974271603, ("Dynamic", "Drop__DropActor"),
+     "Item_Dungeon_Compass", "Item_BombBag_Small"),
+    ("DodongoCavern", "DodongoCavern_Static.bcett.byml.zs", 17531994809974271603, ("Dynamic", "GetEventName"),
+     "DodongoCavern_GetCompass", "Get_StoneOfFire_GetBombBag"),
+    # no Heart Container after King Dodongo: the file has no recovery heart to name, a green rupee in its place
+    ("DodongoCavern", "DodongoCavern_Static.bcett.byml.zs", 5936534468710061389, ("Gyaml",),
+     "Obj_Heart_Container", "Obj_Rupee_Green"),
+    # Inside Jabu-Jabu's Belly: the Map and the Compass trade chests (the Boomerang stays: the dungeon needs it). Their "you got"
+    # events stay with the chests (the Compass's is Ruto's, the Map's has none)
+    ("InsideJabuJabuBelly", "InsideJabuJabuBelly_Static.bcett.byml.zs", 14933854942830098290, ("Dynamic", "Drop__DropActor"),
+     "Item_Dungeon_Map", "Item_Dungeon_Compass"),
+    ("InsideJabuJabuBelly", "InsideJabuJabuBelly_Static.bcett.byml.zs", 3510516276638146208, ("Dynamic", "Drop__DropActor"),
+     "Item_Dungeon_Compass", "Item_Dungeon_Map"),
+]
+
+# (Mako) the bosses take more hits in Master Quest: their actor pack's MaxLife (Life/LifeParameters, an integer in place: the
+# pack keeps its size). (actor, the game's MaxLife, Master Quest's: about 1.5x)
+BOSSES = [
+    ("Enemy_DungeonBoss_Gohma", 21, 32),
+    ("Enemy_DungeonBoss_Dodongo", 24, 36),
+    ("Enemy_DungeonBoss_Barinade", 15, 23),
 ]
 
 
@@ -149,6 +177,52 @@ def write_raw_zstd(path, data):   # (as host/prompts.c write_zstd_raw: a frame o
                 break
 
 
+def sarc_files(b):   # (a SARC's files: name -> (start, end) in b)
+    assert b[:4] == b"SARC"
+    hl = struct.unpack_from("<H", b, 4)[0]
+    data = struct.unpack_from("<I", b, 12)[0]
+    n = struct.unpack_from("<H", b, hl + 6)[0]
+    names = hl + 12 + 16 * n + 8
+    out = {}
+    for i in range(n):
+        _, attr, s, e = struct.unpack_from("<IIII", b, hl + 12 + 16 * i)
+        o = names + (attr & 0xFFFFFF) * 4
+        out[b[o:b.index(b"\0", o)].decode()] = (data + s, data + e)
+    return out
+
+
+def build_bosses(romfs, out, log=print):
+    import zstandard
+    d = zstandard.ZstdDecompressor(dict_data=zstandard.ZstdCompressionDict(zs_dictionary(romfs, b"pack.zsdic")))
+    done = 0
+    for actor, old, new in BOSSES:
+        src = os.path.join(romfs, "Pack", "Actor", actor + ".pack.zs")
+        dst = os.path.join(out, "mq", "pack", "actor", (actor + ".pack.zs").lower())
+        if os.path.exists(dst):
+            os.remove(dst)
+        if not os.path.exists(src):
+            log(f"master quest: no {src}: left as it is")
+            continue
+        with open(src, "rb") as f:
+            b = bytearray(d.decompressobj().decompress(f.read()))
+        where = sarc_files(bytes(b)).get(f"Life/LifeParameters/{actor}.game__life__LifeParameters.bgyml")
+        if where is None:
+            log(f"master quest: {actor}: no life parameters: left as it is")
+            continue
+        s, e = where
+        y = Byml(bytes(b[s:e]))
+        got = y.dict_slot(y.root, "MaxLife")
+        if got is None or got[0] != 0xD1 or y.u32(got[1]) != old:
+            log(f"master quest: {actor}: MaxLife is not {old}: left as it is")
+            continue
+        struct.pack_into("<I", b, s + got[1], new)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        write_raw_zstd(dst, bytes(b))
+        done += 1
+    log(f"master quest: {done} of {len(BOSSES)} bosses made tougher")
+    return done
+
+
 def build(romfs, out, log=print):
     import zstandard
     d = zstandard.ZstdDecompressor(dict_data=zstandard.ZstdCompressionDict(zs_dictionary(romfs, b"bcett.byml.zsdic")))
@@ -172,6 +246,7 @@ def build(romfs, out, log=print):
             os.remove(dst)
         total += done
     log(f"master quest: {total} of {len(CHANGES)} dungeon changes")
+    build_bosses(romfs, out, log)
     return total
 
 
