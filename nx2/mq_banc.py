@@ -83,6 +83,21 @@ RUPEE_LINE = {
     "JPja": "……ルピー？", "KRko": "……루피?", "CNzh": "……卢比？", "TWzh": "……盧比？",
 }
 
+# Navi's balloon after the map's or the compass's chest (NaviChat flow TreasureBoxDM_NaviChat_<dungeon>_Map/_Compass:
+# "Now we won't get lost!", "Try looking at the map."), each fitting the shortest of the two slots in its language
+NAVI_LINE = {
+    "USen": "This chest is weird...", "EUen": "This chest is weird...",
+    "USfr": "Bizarre, ce coffre...", "EUfr": "Bizarre, ce coffre...",
+    "USes": "Qué cofre tan raro", "EUes": "Qué cofre tan raro",
+    "EUde": "Komische Truhe...", "EUit": "Che forziere strano...", "EUnl": "Rare kist, zeg...",
+    "EUpl": "Dziwna ta skrzynia...", "EUru": "Странный сундук.", "USpt": "Baú estranho...",
+    "JPja": "へんな宝箱…", "KRko": "이상한 상자네...", "CNzh": "这宝箱好怪…", "TWzh": "這個寶箱好奇怪…",
+}
+TEXTS = [
+    ("ActorMsg/PouchContent.msbt", ("Obj_Rupee_Green_GetCaption",), RUPEE_LINE),
+    ("EventFlowMsg/NaviChat.msbt", ("Near_46", "Near_133"), NAVI_LINE),
+]
+
 # (Mako) the bosses take more hits in Master Quest: their actor pack's MaxLife (Life/LifeParameters, an integer in place: the
 # pack keeps its size). (actor, the game's MaxLife, Master Quest's: about 1.5x)
 BOSSES = [
@@ -230,8 +245,8 @@ def msbt_text(b, label):   # (an MSBT's message: its (start, end) in b, end at i
 
 
 def build_texts(romfs, out, log=print):
-    """the green rupee's line under its "you got" (Obj_Rupee_Green_GetCaption) becomes "......a rupee?" in the game's language,
-    in place (NULs after it: the message file keeps its size): the maps' and compasses' big chests give one (NO_MAPS)"""
+    """Master Quest's texts (TEXTS: the green rupee's line under its "you got", "......a rupee?"; Navi's balloon after a map or
+    compass chest, "This chest is weird..."), each in its message's slot (NULs after it: the message file keeps its size)"""
     import zstandard
     folder = os.path.join(romfs, "Mals")
     if not os.path.isdir(folder):
@@ -242,25 +257,31 @@ def build_texts(romfs, out, log=print):
         dst = os.path.join(out, "mq", "mals", name.lower())
         if os.path.exists(dst):
             os.remove(dst)
-        line = RUPEE_LINE.get(name[:4])
-        if not line or not name.endswith(".sarc.zs"):
+        if not name.endswith(".sarc.zs"):
             continue
         with open(os.path.join(folder, name), "rb") as f:
             b = bytearray(d.decompressobj().decompress(f.read()))
-        where = sarc_files(bytes(b)).get("ActorMsg/PouchContent.msbt")
-        if where is None:
-            continue
-        s, e = where
-        got = msbt_text(bytes(b[s:e]), "Obj_Rupee_Green_GetCaption")
-        new = line.encode()
-        if got is None or len(new) > got[1] - got[0]:
-            log(f"master quest: {name}: the green rupee's line left as it is")
-            continue
-        b[s + got[0]:s + got[1]] = new.ljust(got[1] - got[0], b"\0")
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        write_raw_zstd(dst, bytes(b))
-        done += 1
-    log(f"master quest: the green rupee's surprise in {done} languages")
+        files = sarc_files(bytes(b))
+        n = 0
+        for msbt, labels, lines in TEXTS:
+            line = lines.get(name[:4])
+            where = files.get(msbt)
+            if not line or where is None:
+                continue
+            s, e = where
+            for label in labels:
+                got = msbt_text(bytes(b[s:e]), label)
+                new = line.encode()
+                if got is None or len(new) > got[1] - got[0]:
+                    log(f"master quest: {name}: {label} left as it is")
+                    continue
+                b[s + got[0]:s + got[1]] = new.ljust(got[1] - got[0], b"\0")
+                n += 1
+        if n:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            write_raw_zstd(dst, bytes(b))
+            done += 1
+    log(f"master quest: its texts in {done} languages")
     return done
 
 
