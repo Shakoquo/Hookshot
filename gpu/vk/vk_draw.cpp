@@ -983,6 +983,7 @@ struct PipeEntry {
     std::atomic<bool> ready{false};
     std::atomic<VkPipeline> pipeline{VK_NULL_HANDLE};   // (a fast-linked one first, the worker's full build over it)
     std::shared_ptr<JobClaim> claim;   // (hookshot: its build, which a draw that must wait runs itself if no worker took it yet)
+    std::atomic<bool> quick{false};    // (Mako §78: a quick one, without the driver's optimizer, being made or made: quick_pipeline)
 };
 std::unordered_map<uint64_t, std::unique_ptr<PipeEntry>> pipelines;   // (the replay thread's)
 int64_t st_draws, st_skipped, st_dispatches, st_passes, st_mesh, st_pending_skips, st_waits;
@@ -1117,6 +1118,7 @@ bool gpl_libs_cached() {
     static const bool on = !getenv("RX_VK_GPL_NO_CACHE");
     return on;
 }
+thread_local bool quick_build = false;   // (Mako §78: quick_pipeline's build, without the driver's optimizer, not into our cache)
 thread_local bool driver_cache_only = false;   // (predict_run's: pipelines for the driver's own cache, not into ours)
 /// (with the pipeline cache: from it, or in play into the play generation's, create_cached)
 VkResult cached_graphics(const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl) {
@@ -1905,6 +1907,9 @@ PipeEntry* graphics_pipeline(const Program& p, const NvnState& s, const Targets&
     auto job = std::make_shared<Job>();
     job->e = e, job->p = &p, job->s = s, job->at = at, job->topo = topo, job->cold[0] = cold[0], job->cold[1] = cold[1];
     jobs_push([job] {
+        // (Mako §78, a test: RX_VK_TEST_SLOW_MS=<ms> holds each full build that long, as AMD's optimizer on a cold cache)
+        static const int slow_ms = getenv("RX_VK_TEST_SLOW_MS") ? atoi(getenv("RX_VK_TEST_SLOW_MS")) : 0;
+        if (slow_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(slow_ms));
         // (over a linked one, which is left alone: draws recorded with it may still be on their way)
         if (const VkPipeline full = build_graphics(*job->p, job->s, job->at, job->topo)) job->e->pipeline = full;
         job->e->ready.store(true, std::memory_order_release);
@@ -2108,7 +2113,7 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
     {   // (local) RX_VK_NOOPT=1: build every pipeline without the driver's optimizer. AMD's proprietary compiler crashes
         // (-13 here) or takes minutes on some Ocarina shaders it builds in seconds unoptimized (Lichii #200, #210).
         static const bool noopt = getenv("RX_VK_NOOPT") != nullptr;
-        if (noopt) ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+        if (noopt || quick_build) ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
         // (from PR 430, YunaraDebugs: on AMD the task and mesh programs (OoT's foliage culling, following pointers through its
         // tables) hung the GPU when the driver's optimizer built them: a device lost one to four minutes into Kokiri, each time with
         // another of them first (RX 6600, issues 461 and 484); never in runs where they were built without it. They are built
@@ -2145,7 +2150,7 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
     // (measured: 21 of 21). gpl_libs_cached: RX_VK_GPL_NO_CACHE=1 keeps them out, as before. With our cache: through
     // graphics_with, so in play one compiled goes into the play generation, and an ask under the flag still goes to pcache)
     const bool lib_cached = (part == 1 || part == 2) && gpl_libs_cached();
-    const VkPipelineCache cache = lib_cached || (part < 0 && !driver_cache_only) ? pcache : VK_NULL_HANDLE;
+    const VkPipelineCache cache = !quick_build && (lib_cached || (part < 0 && !driver_cache_only)) ? pcache : VK_NULL_HANDLE;
     VkResult r = graphics_with(cache, &ci, &pl);
     // The AMD Windows compiler can reject ordinary graphics pipelines with its optimizer on.
     if (dev.props.vendorID == 0x1002 && dev.task_mesh_fallback && !p.mesh && part < 0 && r == VK_ERROR_UNKNOWN &&
@@ -2177,8 +2182,66 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
                            (fb_one.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);
         pcache_built_since_save += !known;
     }
-    st_pipeline_us += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
+    const int64_t built_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
+    st_pipeline_us += built_us;
+    if (built_us >= 300000) {   // (Mako §78: what the slow ones are: AMD's optimizer took 5-13 s each for Volvagia's intro)
+        static std::atomic<int> told{0};
+        if (told++ < 200)
+            logf("vk: graphics pipeline of %016llx: SLOW build, %lld ms%s%s", (unsigned long long)p.key, (long long)(built_us / 1000),
+                 (ci.flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT) ? ", without the optimizer" : "", quick_build ? " (quick)" : "");
+    }
     return pl;
+}
+
+/// (Mako §78) A pipeline made here, now, without the driver's optimizer, for a draw whose full build is not done: set as the
+/// entry's pipeline (not ready: the worker's build replaces it when done). At most RX_VK_QUICK_MS (1000) of them a frame on
+/// each recording thread; one another thread is making is not waited for. true: the entry has one to draw with
+/// must: a draw that cannot be left out (it would wait for the full build otherwise): no budget, and one another thread is making
+/// is waited for (a quick build: tens of ms)
+bool quick_pipeline(PipeEntry& e, const Program& p, const NvnState& s, const Targets& at, VkPrimitiveTopology topo, bool must) {
+    static const double budget_ms = getenv("RX_VK_QUICK_MS") ? atof(getenv("RX_VK_QUICK_MS")) : 1000.0;
+    static thread_local uint64_t frame = ~0ull;
+    static thread_local double used_ms = 0;
+    if (budget_ms <= 0) return false;
+    const uint64_t f = texture_frame_no();
+    if (f != frame) frame = f, used_ms = 0;
+    if ((!must && used_ms >= budget_ms) || e.quick.exchange(true, std::memory_order_acq_rel)) {
+        if (must)   // (another thread's quick build: a few ms; the full one coming first ends the wait too)
+            for (int i = 0; i < 5000 && !e.pipeline.load(std::memory_order_acquire) && !e.ready.load(std::memory_order_acquire); i++)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return e.pipeline.load(std::memory_order_acquire) != VK_NULL_HANDLE;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    // (Mako §78b) the full one first, if a cache has it compiled (ours, the driver's): asked without compiling, it comes back in a
+    // ms or two. Made without the optimizer at once, a pipeline the caches held was compiled anew each time, 50-300 ms apiece,
+    // 450 of them on a room's first frames with nothing ready yet (a test with every full build held 8 s): black for 20 s
+    {
+        bool cold = false;
+        if (const VkPipeline full = build_graphics(p, s, at, topo, -1, &cold)) {
+            VkPipeline none = VK_NULL_HANDLE;
+            if (!e.pipeline.compare_exchange_strong(none, full, std::memory_order_acq_rel)) {}   // (kept: draws may hold it)
+            static std::atomic<int64_t> hits{0};
+            const int64_t h = ++hits;
+            if (h <= 5 || h % 200 == 0) logf("vk: pipeline from the caches for a draw ahead of its build (%lld so far)", (long long)h);
+            return true;
+        }
+    }
+    quick_build = true;
+    const VkPipeline q = build_graphics(p, s, at, topo);
+    quick_build = false;
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    used_ms += ms;
+    static std::atomic<int64_t> n{0};
+    static std::atomic<int64_t> total_us{0};
+    const int64_t k = ++n;
+    total_us += (int64_t)(ms * 1000);
+    if (k <= 20 || k % 50 == 0)
+        logf("vk: quick pipeline (no optimizer) for %016llx in %.1f ms, drawn with until its full build is done (%lld so far, %.0f ms in all)",
+             (unsigned long long)p.key, ms, (long long)k, total_us.load() / 1000.0);
+    if (!q) return false;
+    VkPipeline none = VK_NULL_HANDLE;
+    e.pipeline.compare_exchange_strong(none, q, std::memory_order_acq_rel);   // (the full one may have come first: kept)
+    return true;
 }
 
 // ---- samplers (by NVN sampler parameters) ----
@@ -6299,9 +6362,36 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         st_waits++;
         st_wait_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     };
+    // (Mako §78) before one is left out, its build run here at once, ahead of the queue (jobs_steal, a pipeline's claim), and
+    // waited for, while this frame's RX_VK_PIPE_WAIT_MS (100) on this recording thread last: a
+    // boss met for the first time (Volvagia, Ganondorf) had its colour draws left out through its whole intro while their
+    // programs and pipelines compiled, its depth and shadows drawn: a black silhouette. Most compile within a few ms; the
+    // frame is held about that long at most (one build started may finish past it), not the 0.2-3 s an area's first programs
+    // froze it when every draw waited. Clean first, then fast: the user's call. 0: left out at once, as before
+    const auto brief_wait = [&](const std::atomic<bool>& ready, const std::shared_ptr<JobClaim>* claim) {
+        static const double budget_ms = getenv("RX_VK_PIPE_WAIT_MS") ? atof(getenv("RX_VK_PIPE_WAIT_MS")) : 100.0;
+        static thread_local uint64_t frame = ~0ull;
+        static thread_local double used_ms = 0;
+        if (budget_ms <= 0) return false;
+        const uint64_t f = texture_frame_no();
+        if (f != frame) frame = f, used_ms = 0;
+        if (used_ms >= budget_ms) return false;
+        const auto t0 = std::chrono::steady_clock::now();
+        if (claim) jobs_claim_run(*claim);
+        else jobs_steal(ready);
+        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        while (!ready.load(std::memory_order_acquire) && ms < budget_ms - used_ms) {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        }
+        used_ms += ms;
+        st_waits++;
+        st_wait_ms += ms;
+        return ready.load(std::memory_order_acquire);
+    };
     if (!cp->ready.load(std::memory_order_acquire)) {
-        if (may_skip) return void(st_pending_skips++);
-        wait_for(cp->ready);
+        if (may_skip && !brief_wait(cp->ready, nullptr)) return void(st_pending_skips++);
+        if (!may_skip) wait_for(cp->ready);
     }
     if (exposure_log_on() && cp) exposure_note(s, *cp);
     if (cp->failed) SKIP_HERE();
@@ -6330,7 +6420,14 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         }
         pe = graphics_pipeline(p, s, at, topo, types);
     }
-    if (!pe->ready.load(std::memory_order_acquire)) {
+    // (Mako §78) Not ready and nothing to draw with: one made now without the driver's optimizer (quick_pipeline), drawn with until
+    // the worker's full build replaces it. AMD's optimizer took 5-13 s a pipeline for Volvagia's intro: left out, the boss was a
+    // black silhouette; waited for, the intro froze for half a minute. RX_VK_QUICK_MS=0: left out, as before
+    if (!pe->ready.load(std::memory_order_acquire) && !pe->pipeline.load(std::memory_order_acquire)) {
+        // (Mako §78b) a draw that cannot be left out gets one too, at once: it waited for the full build, and with nothing in the
+        // caches (a first meeting, a new area) loading froze, one optimized build after another on this thread (0.8 fps)
+        if (quick_pipeline(*pe, p, s, at, topo, !may_skip)) {
+        } else {
         if (may_skip) return void(st_pending_skips++);
         // (hookshot) built here when no worker has started it: otherwise the draw waited behind every queued job
         // (RX 6600 log: one draw 118 s, "26 jobs queued")
@@ -6339,6 +6436,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
             if (told++ < 10) logf("vk: a draw's pipeline built where it waited (%d jobs queued)", jobs_pending());
         }
         wait_for(pe->ready);
+        }
     }
     const VkPipeline pl = pe->pipeline;
     if (!pl) SKIP_HERE();
