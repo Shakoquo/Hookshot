@@ -256,6 +256,7 @@ static class Theme {
 abstract class Widget {
     public RectangleF R;
     public int Page = -1;        // (-1: always shown; else the tab it belongs to)
+    public int HideOn = -1;      // (an always-shown widget left out on this page)
     public float Hover;          // (0..1, eased toward the mouse)
     public bool Enabled = true;
     public virtual string Help { get { return null; } }
@@ -406,12 +407,36 @@ class Toggle : Widget {
     }
 }
 
+// (Mako) one of the Master Quest page's trials: a card, gold when chosen
+class GoldChoice : Widget {
+    public string Title, Sub; public Func<bool> IsOn; public Action Click;
+    public override void Down(PointF p, LauncherForm ui) { if (Click != null) Click(); }
+    public override void Paint(Graphics g, LauncherForm ui) {
+        bool on = IsOn != null && IsOn();
+        using (var path = Theme.Round(R, 12)) {
+            if (on) {
+                using (var br = new LinearGradientBrush(R, Color.FromArgb(214, 152, 46), Color.FromArgb(120, 72, 16), LinearGradientMode.Vertical)) g.FillPath(br, path);
+                using (var pen = new Pen(Color.FromArgb(255, 226, 150), 1.4f)) g.DrawPath(pen, path);
+            } else {
+                using (var b = new SolidBrush(Color.FromArgb(150, 12, 10, 18))) g.FillPath(b, path);
+                using (var pen = new Pen(Color.FromArgb(70 + (int)(110 * Hover), 220, 170, 90), 1.1f)) g.DrawPath(pen, path);
+            }
+        }
+        var tf = Theme.Pick(13f, FontStyle.Bold, "Constantia", "Georgia");
+        Theme.Text_(g, Title, tf, on ? Color.White : Color.FromArgb(240, 214, 160), new RectangleF(R.X, R.Y + 8, R.Width, 24), StringAlignment.Center, StringAlignment.Center);
+        Theme.Text_(g, Sub, Theme.Small, on ? Color.FromArgb(255, 240, 210) : Color.FromArgb(160, 145, 120), new RectangleF(R.X, R.Y + 30, R.Width, 20),
+                    StringAlignment.Center, StringAlignment.Center);
+    }
+}
+
 class TabW : Widget {
     public string Text; public int Index;
     public override void Down(PointF p, LauncherForm ui) { ui.ShowPage(Index); }
     public override void Paint(Graphics g, LauncherForm ui) {
         bool on = ui.PageNow == Index;
-        Theme.Text_(g, Text, Theme.Tab, on ? Color.White : Theme.Mix(Theme.Dim, Theme.Text, Hover), R, StringAlignment.Center, StringAlignment.Center);
+        Color c = on ? Color.White : Theme.Mix(Theme.Dim, Theme.Text, Hover);
+        if (Index == 6) c = on ? Color.FromArgb(255, 222, 150) : Theme.Mix(Color.FromArgb(200, 160, 90), Color.FromArgb(255, 222, 150), Hover);   // (Master Quest)
+        Theme.Text_(g, Text, Theme.Tab, c, R, StringAlignment.Center, StringAlignment.Center);
     }
 }
 
@@ -634,17 +659,25 @@ class LauncherForm : Form {
             string mqPath = Path.Combine(dir, "prompts", "mq", "logo.png");
             if (File.Exists(mqPath)) mqLogo = Image.FromStream(new MemoryStream(File.ReadAllBytes(mqPath)));
         } catch { }
-        widgets.Add(new Btn { Text = "PLAY MASTER QUEST", Style = Btn.Kind.Play, Gold = true, R = new RectangleF(cx + (cw - 440) / 2, 404, 440, 76),
+        widgets.Add(new Btn { Text = "PLAY MASTER QUEST", Style = Btn.Kind.Play, Gold = true, R = new RectangleF(cx + (cw - 420) / 2, 452, 420, 70),
                               Page = 6, Click = () => OnPlay(true) });
-        AddSelectors(MqRows, 6, cx, colW);
-        settings["master_quest_damage"].R = new RectangleF(cx, 500, colW, 62);
-        widgets.Add(new Btn { Text = "Master Quest saves", R = new RectangleF(cx + colW + 14, 510, 200, 42), Page = 6,
+        AddSelectors(MqRows, 99, cx, colW);   // (the damage kept and saved as a setting; shown as the three cards below)
+        string[][] trials = { new[] { "MASTER QUEST", "x2  ·  as on 3DS" }, new[] { "HARDER", "x3 damage" }, new[] { "HERO'S TRIAL", "x4 damage" } };
+        float cardW = (cw - 24) / 3;
+        for (int i = 0; i < trials.Length; i++) {
+            int at = i;
+            widgets.Add(new GoldChoice { Title = trials[i][0], Sub = trials[i][1], Page = 6, R = new RectangleF(cx + i * (cardW + 12), 544, cardW, 58),
+                                         IsOn = () => settings["master_quest_damage"].Index == at,
+                                         Click = () => settings["master_quest_damage"].Set(at, true) });
+        }
+        widgets.Add(new Btn { Text = "Open the Master Quest saves", Style = Btn.Kind.Link, R = new RectangleF(cx + cw - 230, 622, 230, 26), Page = 6,
                               Click = () => { Directory.CreateDirectory(Path.Combine(dir, "user", "save_mq")); OpenFolder(Path.Combine(dir, "user", "save_mq")); } });
+        for (int i = 0; i < mqMotes.Length; i++) { mqMotes[i] = NewMote(); mqMotes[i].Y = 100 + (float)(rnd.NextDouble() * (H - 100)); }
 
         // (bottom row: folders)
-        widgets.Add(new Btn { Text = "Saves", R = new RectangleF(cx, 612, 130, 42), Click = () => OpenFolder(Path.Combine(dir, "user", "save")) });
-        widgets.Add(new Btn { Text = "Import saves", R = new RectangleF(cx + 140, 612, 150, 42), Click = OnImport });
-        widgets.Add(new Btn { Text = "Game folder", R = new RectangleF(cx + 300, 612, 150, 42), Click = () => OpenFolder(dir) });
+        widgets.Add(new Btn { Text = "Saves", R = new RectangleF(cx, 612, 130, 42), HideOn = 6, Click = () => OpenFolder(Path.Combine(dir, "user", "save")) });
+        widgets.Add(new Btn { Text = "Import saves", R = new RectangleF(cx + 140, 612, 150, 42), HideOn = 6, Click = OnImport });
+        widgets.Add(new Btn { Text = "Game folder", R = new RectangleF(cx + 300, 612, 150, 42), HideOn = 6, Click = () => OpenFolder(dir) });
 
         // (Mako) the Recommended tab: this PC read once, and its Apply button
         BuildRecommendations();
@@ -680,6 +713,11 @@ class LauncherForm : Form {
         }
     }
 
+    readonly Bubble[] mqMotes = new Bubble[46];   // (the Master Quest page's golden motes, rising like fairies' light)
+    Bubble NewMote() {
+        return new Bubble { X = LeftW + 20 + (float)(rnd.NextDouble() * (W - LeftW - 40)), Y = H + (float)(rnd.NextDouble() * 40), R = 0.8f + (float)(rnd.NextDouble() * 2.2),
+                            V = 0.18f + (float)(rnd.NextDouble() * 0.5), P = (float)(rnd.NextDouble() * 6.28) };
+    }
     Bubble NewBubble() {
         return new Bubble { X = (float)(rnd.NextDouble() * LeftW), Y = H + 10 + (float)(rnd.NextDouble() * 60), R = 1f + (float)(rnd.NextDouble() * 2.6),
                             V = 0.25f + (float)(rnd.NextDouble() * 0.55), P = (float)(rnd.NextDouble() * 6.28) };
@@ -697,7 +735,7 @@ class LauncherForm : Form {
         float dt = 1 / 60f;
         Time = (float)clock.Elapsed.TotalSeconds;
         foreach (var w in widgets) {
-            bool visible = w.Page < 0 || w.Page == PageNow;
+            bool visible = (w.Page < 0 && w.HideOn != PageNow) || w.Page == PageNow;
             float target = visible && w.Enabled && w.R.Contains(mouse) ? 1 : 0;
             w.Hover += (target - w.Hover) * 0.22f;
             w.Tick();
@@ -705,6 +743,11 @@ class LauncherForm : Form {
         var t = tabs[PageNow].R;
         tabX += (t.X - tabX) * 0.2f; tabW += (t.Width - tabW) * 0.2f;
         pageFade = Math.Min(1, pageFade + dt * 5);
+        if (PageNow == 6)
+            for (int i = 0; i < mqMotes.Length; i++) {
+                mqMotes[i].Y -= mqMotes[i].V;
+                if (mqMotes[i].Y < 96) mqMotes[i] = NewMote();
+            }
         for (int i = 0; i < bubbles.Length; i++) {
             bubbles[i].Y -= bubbles[i].V;
             if (bubbles[i].Y < -10) bubbles[i] = NewBubble();
@@ -755,7 +798,9 @@ class LauncherForm : Form {
         using (var b = new SolidBrush(Theme.A(Theme.Dim, 160))) Theme.Spaced(g, "MAKO LAUNCHER", Theme.Caps, b, LeftW + (W - LeftW) / 2f, 13, 4);
 
         // (tabs underline and the page)
-        using (var b = new LinearGradientBrush(new RectangleF(tabX, 88, Math.Max(1, tabW), 3), Theme.Blue, Theme.Cyan, 0f))
+        if (PageNow == 6) PaintMqScene(g);
+        using (var b = new LinearGradientBrush(new RectangleF(tabX, 88, Math.Max(1, tabW), 3), PageNow == 6 ? Color.FromArgb(200, 130, 30) : Theme.Blue,
+                                               PageNow == 6 ? Color.FromArgb(255, 220, 130) : Theme.Cyan, 0f))
             using (var p = Theme.Round(new RectangleF(tabX + 10, 88, Math.Max(1, tabW - 20), 3), 1.5f)) g.FillPath(b, p);
         using (var pen = new Pen(Color.FromArgb(24, 120, 170, 255))) g.DrawLine(pen, LeftW + 36, 92, W - 36, 92);
 
@@ -776,7 +821,7 @@ class LauncherForm : Form {
             Theme.Text_(g, helpShown, Theme.Small, Theme.A(Theme.Text, (int)(230 * helpFade)), new RectangleF(r.X + 30, r.Y, r.Width - 40, r.Height),
                         StringAlignment.Near, StringAlignment.Center);
         }
-        foreach (var w in widgets) if (w.Page < 0) w.Paint(g, this);
+        foreach (var w in widgets) if (w.Page < 0 && w.HideOn != PageNow) w.Paint(g, this);
     }
 
     static float Ease(float t) { t = Math.Max(0, Math.Min(1, t)); return 1 - (1 - t) * (1 - t) * (1 - t); }
@@ -884,27 +929,110 @@ class LauncherForm : Form {
         }
     }
 
-    // (Mako) the Master Quest page: the logo the build made from the player's files, a soft gold glow behind it
-    void PaintMasterQuest(Graphics g, float x) {
-        float cw = W - LeftW - 72;
-        var lr = new RectangleF(x + (cw - 364) / 2, 104, 364, 280);
-        float pulse = 0.5f + 0.5f * (float)Math.Sin(Time * 1.4);
-        using (var p = new GraphicsPath()) {
-            p.AddEllipse(RectangleF.Inflate(lr, 30, 10));
-            using (var pb = new PathGradientBrush(p) { CenterColor = Color.FromArgb((int)(34 + 26 * pulse), 255, 190, 80), SurroundColors = new[] { Color.FromArgb(0, 255, 190, 80) } })
-                g.FillPath(pb, p);
+    // (Mako) the Master Quest page's scene: a night sky turning to embers, light falling on the logo, the Triforce drawn faintly
+    // behind it, golden motes rising. The still part drawn once
+    Bitmap mqBack;
+    static PointF[] Tri(float cx, float top, float side) {
+        float h = side * 0.866f;
+        return new[] { new PointF(cx, top), new PointF(cx + side / 2, top + h), new PointF(cx - side / 2, top + h) };
+    }
+    void PaintMqScene(Graphics g) {
+        var area = new RectangleF(LeftW + 1, 96, W - LeftW - 1, H - 96);
+        if (mqBack == null) {
+            mqBack = new Bitmap((int)area.Width, (int)area.Height);
+            using (var bg = Graphics.FromImage(mqBack)) {
+                bg.SmoothingMode = SmoothingMode.AntiAlias;
+                var r = new RectangleF(0, 0, area.Width, area.Height);
+                using (var br = new LinearGradientBrush(r, Color.FromArgb(8, 10, 26), Color.FromArgb(26, 14, 6), LinearGradientMode.Vertical)) {
+                    var blend = new ColorBlend(3);
+                    blend.Colors = new[] { Color.FromArgb(9, 12, 30), Color.FromArgb(16, 13, 30), Color.FromArgb(30, 17, 6) };
+                    blend.Positions = new[] { 0f, 0.55f, 1f };
+                    br.InterpolationColors = blend;
+                    bg.FillRectangle(br, r);
+                }
+                float cx = r.Width / 2;
+                // (the light around the logo)
+                using (var path = new GraphicsPath()) {
+                    path.AddEllipse(cx - 300, -40, 600, 440);
+                    using (var pb = new PathGradientBrush(path) { CenterColor = Color.FromArgb(70, 255, 196, 92), SurroundColors = new[] { Color.FromArgb(0, 255, 196, 92) } })
+                        bg.FillPath(pb, path);
+                }
+                // (the Triforce, faint, behind the logo)
+                float side = 150, top = 26;
+                foreach (var t in new[] { Tri(cx, top, side), Tri(cx - side / 2, top + side * 0.866f, side), Tri(cx + side / 2, top + side * 0.866f, side) }) {
+                    using (var b = new SolidBrush(Color.FromArgb(16, 255, 205, 110))) bg.FillPolygon(b, t);
+                    using (var pen = new Pen(Color.FromArgb(46, 255, 205, 110), 1.2f)) bg.DrawPolygon(pen, t);
+                }
+                // (stars, few and faint, in the upper sky)
+                var rs = new Random(7);
+                for (int i = 0; i < 70; i++) {
+                    float sx = (float)(rs.NextDouble() * r.Width), sy = (float)(rs.NextDouble() * r.Height * 0.55);
+                    int al = 30 + rs.Next(70);
+                    using (var b = new SolidBrush(Color.FromArgb(al, 220, 230, 255))) bg.FillEllipse(b, sx, sy, 1.6f, 1.6f);
+                }
+                // (embers' glow along the bottom)
+                using (var path = new GraphicsPath()) {
+                    path.AddEllipse(-80, r.Height - 150, r.Width + 160, 300);
+                    using (var pb = new PathGradientBrush(path) { CenterColor = Color.FromArgb(46, 255, 150, 50), SurroundColors = new[] { Color.FromArgb(0, 255, 150, 50) } })
+                        bg.FillPath(pb, path);
+                }
+                // (fades into the tabs above)
+                using (var br = new LinearGradientBrush(new RectangleF(0, 0, r.Width, 30), Theme.Bg1, Color.FromArgb(0, Theme.Bg1), LinearGradientMode.Vertical))
+                    bg.FillRectangle(br, 0, 0, r.Width, 30);
+            }
         }
+        g.DrawImageUnscaled(mqBack, (int)area.X, (int)area.Y);
+        // (light falling on the logo, slowly turning)
+        var st = g.Save();
+        g.SetClip(area);
+        float lx = area.X + area.Width / 2, ly = area.Y - 60;
+        for (int i = 0; i < 5; i++) {
+            double ang = -0.55 + i * 0.27 + Math.Sin(Time * 0.25 + i) * 0.05;
+            float len = 560, wdt = 0.07f;
+            var pts = new[] { new PointF(lx, ly), new PointF(lx + (float)Math.Sin(ang - wdt) * len, ly + (float)Math.Cos(ang - wdt) * len),
+                              new PointF(lx + (float)Math.Sin(ang + wdt) * len, ly + (float)Math.Cos(ang + wdt) * len) };
+            int al = (int)(10 + 7 * Math.Sin(Time * 0.6 + i * 1.7));
+            using (var b = new SolidBrush(Color.FromArgb(Math.Max(0, al), 255, 214, 140))) g.FillPolygon(b, pts);
+        }
+        // (the motes)
+        foreach (var m in mqMotes) {
+            float mx = m.X + (float)Math.Sin(Time * 0.9 + m.P) * 10;
+            float tw = 0.5f + 0.5f * (float)Math.Sin(Time * 2.3 + m.P * 3);
+            int al = (int)(60 + 150 * tw);
+            using (var b = new SolidBrush(Color.FromArgb(al / 5, 255, 200, 90))) g.FillEllipse(b, mx - m.R * 3, m.Y - m.R * 3, m.R * 6, m.R * 6);
+            using (var b = new SolidBrush(Color.FromArgb(al, 255, 230, 160))) g.FillEllipse(b, mx - m.R / 2, m.Y - m.R / 2, m.R, m.R);
+        }
+        g.Restore(st);
+    }
+
+    // (Mako) the Master Quest page: the logo the build made from the player's files, the line under it
+    void PaintMasterQuest(Graphics g, float x) {
+        float cw = W - LeftW - 72, mid = x + cw / 2;
+        var lr = new RectangleF(mid - 208, 100, 416, 320);
         if (mqLogo != null) {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.DrawImage(mqLogo, lr);
         } else {
-            Theme.Text_(g, "MASTER QUEST", Theme.Pick(30f, FontStyle.Bold, "Constantia", "Georgia"), Theme.Amber, new RectangleF(lr.X, lr.Y + 90, lr.Width, 44),
-                        StringAlignment.Center, StringAlignment.Center);
-            Theme.Text_(g, "The logo is made when the game is built (rebuild with this version to see it).", Theme.Small, Theme.Faint,
-                        new RectangleF(x, lr.Y + 150, cw, 20), StringAlignment.Center, StringAlignment.Center);
+            using (var b = new SolidBrush(Color.FromArgb(255, 222, 150)))
+                Theme.Spaced(g, "MASTER QUEST", Theme.Pick(34f, FontStyle.Bold, "Constantia", "Georgia"), b, mid, lr.Y + 120, 4);
+            Theme.Text_(g, "The logo appears once the game is built with this version.", Theme.Small, Color.FromArgb(170, 150, 120),
+                        new RectangleF(x, lr.Y + 176, cw, 20), StringAlignment.Center, StringAlignment.Center);
         }
-        Theme.Text_(g, "Enemies hit harder, the Master Quest title. Your Master Quest saves are kept apart from the normal game's.",
-                    Theme.Small, Theme.Dim, new RectangleF(x, 384, cw, 18), StringAlignment.Center, StringAlignment.Near);
+        // (an ornament: lines, diamonds, the promise between)
+        var gold = Color.FromArgb(220, 178, 96);
+        string line = "ENEMIES STRIKE HARDER   ·   A SAVE OF ITS OWN";
+        var f = Theme.Pick(10.5f, FontStyle.Regular, "Constantia", "Georgia");
+        float tw = g.MeasureString(line, f).Width + 30, y = 432;
+        using (var pen = new Pen(Color.FromArgb(120, gold), 1f)) {
+            g.DrawLine(pen, mid - tw / 2 - 120, y, mid - tw / 2, y);
+            g.DrawLine(pen, mid + tw / 2, y, mid + tw / 2 + 120, y);
+        }
+        foreach (float dx in new[] { -tw / 2 - 124, tw / 2 + 124 })
+            using (var b = new SolidBrush(gold)) g.FillPolygon(b, new[] { new PointF(mid + dx, y - 4), new PointF(mid + dx + 4, y), new PointF(mid + dx, y + 4), new PointF(mid + dx - 4, y) });
+        Theme.Text_(g, line, f, gold, new RectangleF(mid - tw / 2, y - 9, tw, 18), StringAlignment.Center, StringAlignment.Center);
+        Theme.Text_(g, "Choose your trial:", Theme.Pick(10.5f, FontStyle.Regular, "Constantia", "Georgia"), Color.FromArgb(180, 160, 130),
+                    new RectangleF(x, 526, 300, 16), StringAlignment.Near, StringAlignment.Center);
+        Theme.Text_(g, "Applies at the next start.", Theme.Small, Color.FromArgb(150, 135, 112), new RectangleF(x, 622, 300, 26), StringAlignment.Near, StringAlignment.Center);
     }
 
     // ---- mouse ----
@@ -918,7 +1046,7 @@ class LauncherForm : Form {
     Widget At(PointF p) {
         for (int i = widgets.Count - 1; i >= 0; i--) {
             var w = widgets[i];
-            if ((w.Page < 0 || w.Page == PageNow) && w.Hit(p)) return w;
+            if (((w.Page < 0 && w.HideOn != PageNow) || w.Page == PageNow) && w.Hit(p)) return w;
         }
         return null;
     }
