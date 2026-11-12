@@ -547,8 +547,8 @@ class LauncherForm : Form {
             "The filter that fits the picture to your screen. Catmull-Rom is sharper, Lanczos sharper still." },
         new object[] { "sharpness", "Sharpness", new[] { "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, new[] { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 },
             "Sharpens the picture on its way to the screen. Too much shows halos around edges." },
-        new object[] { "frame_generation", "Frame generation", new[] { "Off", "2x", "3x", "4x", "5x", "6x", "7x", "8x" }, new[] { 0, 2, 3, 4, 5, 6, 7, 8 },
-            "Shows extra in-between frames for smoother motion." },
+        new object[] { "frame_generation", "Frame generation", new[] { "Off", "2x", "3x", "4x", "5x", "6x", "7x", "8x", "AMD Redstone 2x" }, new[] { 0, 2, 3, 4, 5, 6, 7, 8, 2 },
+            "Shows extra in-between frames for smoother motion. AMD Redstone 2x: AMD's AI frame generation instead of Mako's, for RX 9000 cards with AMD's files (FSR tab) and FSR 4. Best with 12 GB+." },
         new object[] { "frame_rate_cap", "Frame rate cap", new[] { "60 (the console's)", "90", "120", "144", "165", "240" }, new[] { 0, 1, 2, 3, 4, 5 },
             "The most frames per second the game runs at. Above 60 needs a screen that shows them." },
         new object[] { "amd_anti-lag_2", "AMD Anti-Lag 2", new[] { "Off", "On" }, new[] { 0, 1 },
@@ -596,7 +596,6 @@ class LauncherForm : Form {
         // (Mako) the predicted pipelines behind the game (gpu/vk/vk_draw.cpp predict_background); off: all before the title
         new[] { "RX_VK_PREDICT_BG", "1", "Quick first start", "Off (recommended): after an update every effect is prepared before the title (up to ~40 min, once). On: the title comes much sooner, but expect stutters for hours.", "" },
         // (Mako) AMD FSR Redstone frame generation (gpu/vk/vk_redstone.h), off unless switched on: it takes video memory
-        new[] { "RX_VK_REDSTONE", "1", "AMD FSR Redstone frame generation (RX 9000)", "AMD's AI frame generation instead of Mako's: cleaner motion, steady HUD. Needs an RX 9000, AMD's files (FSR tab), FSR 4 and Frame generation 2x. Best with 12 GB+.", "" },
     };
 
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
@@ -1039,10 +1038,13 @@ class LauncherForm : Form {
         Selector s;
         if (!settings.TryGetValue(key, out s)) return;
         if (key == "frame_generation" && value == 1) value = 2;
+        if (key == "frame_generation" && value == 2 && IsRedstone()) return;   // (2x stays AMD's when it was)
         int best = 0;
         for (int i = 0; i < s.Values.Length; i++) if (Math.Abs(s.Values[i] - value) < Math.Abs(s.Values[best] - value)) best = i;
         if (s.Index < 0) s.Index = best; else s.Set(best, false);
     }
+
+    bool IsRedstone() { Selector s; return settings.TryGetValue("frame_generation", out s) && s.Index == s.Items.Length - 1; }
 
     void LoadAll() {
         loading = true;
@@ -1059,6 +1061,9 @@ class LauncherForm : Form {
             fixes[f[0]].On = env.TryGetValue(f[0], out v) ? v == f[1] : f[1].Length == 0;
             fixes[f[0]].Snap();
         }
+        string rs;
+        if (env.TryGetValue("RX_VK_REDSTONE", out rs) && rs == "1" && settings["frame_generation"].Value == 2)
+            settings["frame_generation"].Index = settings["frame_generation"].Items.Length - 1;
         string lang = ReadLanguage();
         for (int i = 0; i < Languages.Length; i++) if (string.Equals(Languages[i][0], lang, StringComparison.OrdinalIgnoreCase)) langSel.Index = i;
         loading = false;
@@ -1071,6 +1076,7 @@ class LauncherForm : Form {
         else if (Array.IndexOf(PresetKeys, s.Key) >= 0) SetSetting("quality_preset", 0);   // (changed by hand: Custom)
         loading = false;
         SaveOptions();
+        if (s.Key == "frame_generation") SaveEnv();
     }
 
     // (the Insert menu's presets, gpu/vk/vk_menu.cpp apply_preset)
@@ -1129,6 +1135,8 @@ class LauncherForm : Form {
                 string v = fixes[f[0]].On ? f[1] : f[4];
                 if (v.Length > 0) lines.Add(f[0] + "=" + v);
             }
+            lines.RemoveAll(l => { var t = l.Trim(); return !t.StartsWith("#") && t.StartsWith("RX_VK_REDSTONE="); });
+            if (IsRedstone()) lines.Add("RX_VK_REDSTONE=1");
             if (lines.Count == 0 && File.Exists(envPath)) File.Delete(envPath);
             else if (lines.Count > 0) File.WriteAllLines(envPath, lines.ToArray(), new UTF8Encoding(false));
         } catch (Exception ex) {
