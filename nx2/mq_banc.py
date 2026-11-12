@@ -111,6 +111,8 @@ BOSSES = [
 PACK_INTS = [
     ("Shop_Weapon_Shield_Deku", "GameParameter/PriceParam/Shop_Weapon_Shield_Deku.game__pouchcontent__PriceParam.bgyml",
      "BuyingPrice", 40, 55),
+    ("Shop_Weapon_Shield_Hylian", "GameParameter/PriceParam/Weapon_Shield_Hylian.game__pouchcontent__PriceParam.bgyml",
+     "BuyingPrice", 80, 200),
 ]
 
 # (Mako) integers of RSDB tables' rows, in place: (table, __RowId, key, the game's value, Master Quest's). The shop shows and
@@ -118,6 +120,9 @@ PACK_INTS = [
 RSDB_INTS = [
     ("PouchActorInfo", "Shop_Weapon_Shield_Deku", "BuyingPrice", 40, 55),
     ("PouchActorInfo", "Weapon_Shield_Deku", "BuyingPrice", 40, 55),   # (the shop item's name actor: in case its row is used)
+    # the Market bazaar's Hylian Shield: 80 -> 200 (the Adult's Wallet needed: the child's holds 99)
+    ("PouchActorInfo", "Shop_Weapon_Shield_Hylian", "BuyingPrice", 80, 200),
+    ("PouchActorInfo", "Weapon_Shield_Hylian", "BuyingPrice", 80, 200),
 ]
 
 # (Mako) Master Quest's new games start with these game data flags set (GameData/GameDataList: the Bool's DefaultValue, in
