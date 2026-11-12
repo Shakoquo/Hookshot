@@ -53,6 +53,9 @@
 #include "vk_gprof.h"
 #include "vk_jobs.h"
 #include "vk_shader.h"
+#include "vk_shipped_list.h"   // (Mako 3.6.1: the merged pipeline state list, shipped_list_install)
+extern "C" size_t ZSTD_decompress(void* dst, size_t dst_cap, const void* src, size_t src_size);   // (third_party/zstd, in this dll)
+extern "C" unsigned ZSTD_isError(size_t code);
 #include "vk_texture.h"
 #include "movie_upscale_policy.h"
 #include "skip_code.h"
@@ -1543,10 +1546,53 @@ void state_record(const Program& p, const NvnState& s, const Targets& at, VkPrim
     if (!state_file) state_open_locked();
     if (state_file && state_seen.insert(h).second) fwrite(&r, sizeof r, 1, state_file), fflush(state_file);
 }
+/// (Mako 3.6.1) The merged list of assets/pipeline_states/ is built into this dll (vk_shipped_list.h, nx2/shipped_embed.py): the
+/// in-game update only downloads the dll, so a patch brings the lists too. Written as the game folder's
+/// hookshot_pipeline_states_shipped.bin when that one is missing, not a version 2 list, or smaller (a later build's make_game
+/// writes a larger one, which is kept). RX_VK_NO_SHIPPED_EMBED=1: left as it is
+/// (true: written by this call, its pipelines not imported yet)
+bool shipped_list_install() {
+    static std::once_flag once;
+    bool wrote = false;
+    std::call_once(once, [&wrote] {
+        if (getenv("RX_VK_NO_SHIPPED_EMBED")) return;
+        const std::string path = state_list_path("hookshot_pipeline_states_shipped.bin");
+        unsigned long long have = 0;
+        bool v2 = false;
+        if (FILE* f = fopen(path.c_str(), "rb")) {
+            char magic[8];
+            v2 = fread(magic, 8, 1, f) == 1 && !memcmp(magic, kStateMagic2, 8);
+            _fseeki64(f, 0, SEEK_END);
+            have = (unsigned long long)_ftelli64(f);
+            fclose(f);
+        }
+        if (v2 && have >= kShippedListSize) return;
+        std::vector<unsigned char> raw((size_t)kShippedListSize);
+        const size_t got = ZSTD_decompress(raw.data(), raw.size(), kShippedListZst, sizeof kShippedListZst);
+        if (ZSTD_isError(got) || got != raw.size() || memcmp(raw.data(), kStateMagic2, 8)) {
+            logf("vk: state list: the built-in list did not unpack: the folder's is kept");
+            return;
+        }
+        const std::string part = path + ".part";
+        FILE* f = fopen(part.c_str(), "wb");
+        const bool ok = f && fwrite(raw.data(), 1, raw.size(), f) == raw.size();
+        if (f) fclose(f);
+        if (ok && MoveFileExA(part.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            logf("vk: state list: the built-in list of %u pipelines written as %s (it had %llu bytes)", kShippedListPipelines,
+                 path.c_str(), have);
+            wrote = true;
+        } else {
+            remove(part.c_str());
+            logf("vk: state list: the built-in list could not be written: the folder's is kept");
+        }
+    });
+    return wrote;
+}
 /// Every pipeline of the state lists (the player's own and the shipped one): its program translated
 /// when the program cache lacks it, then noted in hookshot_pipelines.bin for precompile_run to build. RX_VK_NO_STATE_LIST=1: off
 void state_list_prepare(void (*progress)(size_t done, size_t total), bool open_seed = false) {
     if (getenv("RX_VK_NO_STATE_LIST")) return;
+    shipped_list_install();
     const auto t0 = std::chrono::steady_clock::now();
     int shipped_version = 0;
     std::vector<StateRec> recs = state_list_read(state_list_path("hookshot_pipeline_states_shipped.bin"), &shipped_version);
@@ -7789,6 +7835,9 @@ bool warm_libraries(void (*progress)(size_t done, size_t total)) {
 /// refresh_states: Builder preparation also imports state lists when the seed is already prepared
 bool prepare_run(void (*progress)(size_t done, size_t total), bool background, bool refresh_states) {
     const auto t0 = std::chrono::steady_clock::now();
+    // (before the counts and the check: the folder's list is the built-in one from here; a new one is imported below even when
+    // the shaders are already prepared)
+    const bool new_list = shipped_list_install() && !background;
     const std::string path = prepared_path();
     PreparedFor prepared_for;
     double hash_ms = 0;
@@ -7803,7 +7852,7 @@ bool prepare_run(void (*progress)(size_t done, size_t total), bool background, b
         // A Builder run can add pipeline states without changing the shader seed.
         if (getenv("RX_VK_SEED_CHECK")) {
             if (seed_open() && refresh_states) state_list_prepare(progress);
-        } else if (refresh_states) {
+        } else if (refresh_states || new_list) {
             state_list_prepare(progress, true);
         }
         if (prepared_for.warmed == warmed || background) return false;
