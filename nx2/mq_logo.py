@@ -199,7 +199,8 @@ def build(romfs, out, dictionary=None, common=None, log=print):
     d = os.path.join(out, "mq")
     os.makedirs(d, exist_ok=True)
     # (the launcher's Master Quest page shows it: made here from the player's own files, never shipped)
-    mq_logo.resize((LOGO_SIZE[0] // 2, LOGO_SIZE[1] // 2), Image.LANCZOS).save(os.path.join(d, "logo.png"))
+    shown = mq_logo.crop(mq_logo.getbbox() or (0, 0) + mq_logo.size)   # (the logo alone, its empty edges cut)
+    shown.resize((shown.width // 2, shown.height // 2), Image.LANCZOS).save(os.path.join(d, "logo.png"))
     with open(os.path.join(d, "Title.bntx"), "wb") as f:
         f.write(title)
     pa.write_textures(os.path.join(d, "title.bin"), [(0xFF, 0, [r for n, im in title_layers.items()

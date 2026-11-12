@@ -271,6 +271,7 @@ class Btn : Widget {
     public enum Kind { Ghost, Primary, Play, Link }
     public string Text; public Kind Style; public Action Click; public Font Font = Theme.Strong;
     public bool Gold;   // (Mako: the Master Quest Play button)
+    public Image Logo;  // (Mako: the left panel's Master Quest button: its logo on a dark button)
     public override void Down(PointF p, LauncherForm ui) { if (Click != null) Click(); }
     public override void Paint(Graphics g, LauncherForm ui) {
         float h = Hover;
@@ -335,6 +336,20 @@ class Btn : Widget {
     // (Mako: the Master Quest Play button, plain: a deep gold, lighter under the mouse)
     void PaintGold(Graphics g) {
         float h = Hover;
+        if (Logo != null) {
+            using (var path = Theme.Round(R, 14)) {
+                using (var br = new LinearGradientBrush(R, Theme.Mix(Color.FromArgb(26, 22, 18), Color.FromArgb(40, 33, 24), h), Color.FromArgb(14, 12, 10),
+                                                        LinearGradientMode.Vertical)) g.FillPath(br, path);
+                using (var pen = new Pen(Theme.Mix(Color.FromArgb(150, 118, 62), Color.FromArgb(226, 184, 106), h), 1.2f)) g.DrawPath(pen, path);
+            }
+            float lh = R.Height - 8, lw = lh * Logo.Width / Logo.Height;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(Logo, R.X + 14, R.Y + 4, lw, lh);
+            using (var b = new SolidBrush(Theme.Mix(Color.FromArgb(226, 184, 106), Color.FromArgb(255, 222, 160), h)))
+                Theme.Spaced(g, Text, Theme.Pick(15f, FontStyle.Bold, "Bahnschrift", "Segoe UI Semibold", "Segoe UI"), b,
+                             R.X + 14 + lw + (R.Width - 14 - lw) / 2, R.Y + R.Height / 2 - 9.5f, 4);
+            return;
+        }
         using (var path = Theme.Round(R, 14)) {
             using (var br = new LinearGradientBrush(R, Theme.Mix(Color.FromArgb(196, 146, 62), Color.FromArgb(214, 166, 80), h),
                                                     Theme.Mix(Color.FromArgb(150, 104, 36), Color.FromArgb(170, 122, 48), h), LinearGradientMode.Vertical)) g.FillPath(br, path);
@@ -621,9 +636,15 @@ class LauncherForm : Form {
         updateButton = new Btn { Text = "Check again", R = new RectangleF(236, 448, 116, 30), Font = Theme.Label, Enabled = false };
         updateButton.Click = OnUpdateButton;
         widgets.Add(updateButton);
-        playButton = new Btn { Text = "PLAY", Style = Btn.Kind.Play, R = new RectangleF(32, 512, 336, 76), Click = OnPlay };
+        playButton = new Btn { Text = "PLAY", Style = Btn.Kind.Play, R = new RectangleF(32, 504, 336, 62), Click = OnPlay };
         widgets.Add(playButton);
-        widgets.Add(new Btn { Text = "Made by sharkiix  ·  based on Hookshot", Style = Btn.Kind.Link, R = new RectangleF(32, 626, 300, 24),
+        // (Mako) Master Quest's own Play, under it: its logo on the button (prompts/mq/logo.png, made by the build from the player's files)
+        try {
+            string mqPath = Path.Combine(dir, "prompts", "mq", "logo.png");
+            if (File.Exists(mqPath)) mqLogo = Image.FromStream(new MemoryStream(File.ReadAllBytes(mqPath)));
+        } catch { }
+        widgets.Add(new Btn { Text = "MASTER QUEST", Style = Btn.Kind.Play, Gold = true, Logo = mqLogo, R = new RectangleF(32, 576, 336, 64), Click = () => OnPlay(true) });
+        widgets.Add(new Btn { Text = "Made by sharkiix  ·  based on Hookshot", Style = Btn.Kind.Link, R = new RectangleF(32, 648, 300, 24),
                               Click = () => OpenUrl(Fork.Home) });
 
         // (tabs)
@@ -660,10 +681,6 @@ class LauncherForm : Form {
         widgets.Add(new Btn { Text = "Licence (GPL-3)", R = new RectangleF(cx + 232, 470, 170, 40), Page = 5, Click = () => OpenUrl(Fork.Home + "/blob/HEAD/LICENSE") });
 
         // (Mako) the Master Quest page: its logo (PaintMasterQuest), its Play button, the damage, its saves
-        try {
-            string mqPath = Path.Combine(dir, "prompts", "mq", "logo.png");
-            if (File.Exists(mqPath)) mqLogo = Image.FromStream(new MemoryStream(File.ReadAllBytes(mqPath)));
-        } catch { }
         widgets.Add(new Btn { Text = "PLAY MASTER QUEST", Style = Btn.Kind.Play, Gold = true, R = new RectangleF(cx + (cw - 420) / 2, 452, 420, 70),
                               Page = 6, Click = () => OnPlay(true) });
         AddSelectors(MqRows, 99, cx, colW);   // (the damage kept and saved as a setting; shown as the three cards below)
@@ -947,6 +964,10 @@ class LauncherForm : Form {
     void PaintMasterQuest(Graphics g, float x) {
         float cw = W - LeftW - 72, mid = x + cw / 2;
         var lr = new RectangleF(mid - 208, 100, 416, 320);
+        if (mqLogo != null) {   // (its own proportions, centred in that space)
+            float lw = Math.Min(416f, 300f * mqLogo.Width / mqLogo.Height), lh = lw * mqLogo.Height / mqLogo.Width;
+            lr = new RectangleF(mid - lw / 2, 100 + (310 - lh) / 2, lw, lh);
+        }
         if (mqLogo != null) {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.DrawImage(mqLogo, lr);
