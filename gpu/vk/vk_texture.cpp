@@ -4292,6 +4292,12 @@ bool texels_fit(const nvn_tex* t, const NVNcopyRegion* r, uint64_t row, uint64_t
 /// ReadTexels / WriteTexels: the CPU's copy of a region in guest memory (block linear, the Switch 2 GOB swizzle).
 /// A write also stamps the pages, so the image is uploaded again; a texture the GPU wrote is read from guest memory
 /// as it is (its newest texels are in the image: not yet read back).
+bool texture_drawn_at(uint64_t gpu) {
+    auto [a, b] = by_gpu.equal_range(gpu);
+    for (auto it = a; it != b; ++it)
+        if (it->second->gpu_written) return true;
+    return false;
+}
 void texture_read_texels(const nvn_tex* t, unsigned level, unsigned layer0, const NVNcopyRegion* r, uint8_t* data,
                          uint64_t row, uint64_t img, bool write) {
     if (!t || !t->gpu || !r) return;
