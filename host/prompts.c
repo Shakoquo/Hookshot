@@ -555,6 +555,13 @@ static int build(char *out, size_t cap) {
 int hos_prompts_romfs(const char *key, char *out, size_t cap) {
     /* (Mako) Master Quest's dungeons: prompts/mq/banc/<scene>/<file> (nx2/mq_banc.py: chests' contents, the bosses' hearts), in
        place of the game's while Master Quest is on */
+    /* (Mako) the Master Quest preview ends with the Deku Tree: the Kokiri Emerald's scene (Dm_Kokiri_0130, after the blue warp) asks
+       the menu for its last page (gpu/vk/vk_menu.cpp preview_end: black, More coming, Back to Launcher) */
+    if (!strncmp(key, "event/eventflow/dm_kokiri_0130.", 31) && hos_master_quest()) {
+        SetEnvironmentVariableA("MAKO_MQ_PREVIEW_END", "1");
+        hos_log("master quest: the preview's end (the Kokiri Emerald's scene)");
+        return 0;
+    }
     if (!strncmp(key, "banc/", 5)) {
         char dir[MAX_PATH];
         if (!hos_master_quest() || !game_dir(dir, sizeof dir)) return 0;
