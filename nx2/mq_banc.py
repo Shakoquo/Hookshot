@@ -72,7 +72,8 @@ NO_MAPS = [
 NO_MAP_ITEM = "TBox_Rupee_Green"
 # (their chests' GetEventName: RSDB EventSetting entries of NaviChat (TreasureBoxDM_NaviChat_Deku_Map...), Navi on the map or the
 # compass. Jabu's compass chest keeps its own (TreasureBox_WithRuto_Room12: Ruto's, not the item's))
-NO_MAP_EVENTS = ("InsideTheDekuTree_GetMap", "InsideTheDekuTree_GetCompass", "DodongoCavern_GetMap", "DodongoCavern_GetCompass")
+# Emptied, the chest no longer opened (user's play, 2026-11-12): the chest needs its event to open. Kept as they are
+NO_MAP_EVENTS = ()
 RUPEE_LINE = {
     "USen": "......a rupee?", "EUen": "......a rupee?",
     "USfr": "......un rubis?", "EUfr": "......un rubis ?",
