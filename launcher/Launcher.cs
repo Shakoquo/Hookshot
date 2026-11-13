@@ -223,6 +223,8 @@ static class Fork {
     public const string Page = "https://github.com/Shakoquo/Mako/releases/latest";
     public const string Home = "https://github.com/Shakoquo/Mako";
     public const string GameExe = "hookshot.exe";
+    public const string Label = "";             // (a test build's own name, e.g. "v4.1 TEST": shown instead of the version)
+    public static string Me(string installed) { return Label.Length > 0 ? Label : Shown(installed); }
     public static string Shown(string v) { var m = Regex.Match(v ?? "", @"\d+(\.\d+)*"); return m.Success ? "v" + m.Value : v; }
 }
 
@@ -950,7 +952,7 @@ class LauncherForm : Form {
             Theme.Spaced(g, "MAKO", Theme.Mark, b, LeftW / 2f, my, 16);
         using (var b = new SolidBrush(Theme.Dim)) Theme.Spaced(g, "OCARINA OF TIME  ·  PC", Theme.Caps, b, LeftW / 2f, my + 66, 3.5f);
         // (version pill)
-        string v = Fork.Shown(Installed());
+        string v = Fork.Me(Installed());
         var vs = g.MeasureString(v, Theme.Small);
         var pill = new RectangleF(LeftW / 2f - vs.Width / 2 - 12, my + 90, vs.Width + 24, 22);
         using (var p = Theme.Round(pill, 11)) {
@@ -998,7 +1000,7 @@ class LauncherForm : Form {
                 using (var pen = new Pen(Theme.Line)) g.DrawPath(pen, p);
             }
             Theme.Text_(g, "Mako", Theme.Pick(26f, FontStyle.Bold, "Bahnschrift", "Segoe UI"), Color.White, new RectangleF(r.X + 24, r.Y + 20, 400, 34), StringAlignment.Near, StringAlignment.Near);
-            Theme.Text_(g, Fork.Shown(Installed()) + "  ·  made by sharkiix", Theme.Body, Theme.Cyan, new RectangleF(r.X + 24, r.Y + 58, 500, 22), StringAlignment.Near, StringAlignment.Near);
+            Theme.Text_(g, Fork.Me(Installed()) + "  ·  made by sharkiix", Theme.Body, Theme.Cyan, new RectangleF(r.X + 24, r.Y + 58, 500, 22), StringAlignment.Near, StringAlignment.Near);
             Theme.Text_(g,
                 "A native PC version of The Legend of Zelda: Ocarina of Time, tuned for AMD graphics cards: steadier frame times, " +
                 "fixed lighting and textures, and its own launcher.\n\n" +
@@ -2183,7 +2185,7 @@ class LauncherForm : Form {
                 zip = ms.ToArray();
             }
             string clean = Scrub(problem).Replace("```", "` ` `");
-            string content = "**Report** · Mako " + ver + "\n" +
+            string content = "**Report** · Mako " + ver + (Fork.Label.Length > 0 ? " (launcher " + Fork.Label + ")" : "") + "\n" +
                              "GPU: " + (pc.Gpu.Length > 0 ? pc.Gpu : "?") + (pc.VramMB > 0 ? " (" + pc.VramGB + " GB)" : "") +
                              " · CPU: " + (pc.Cpu.Length > 0 ? pc.Cpu : "?") + " (" + pc.Threads + " threads) · RAM: " + pc.RamGB + " GB · Screen: " +
                              pc.ScreenW + "x" + pc.ScreenH + " " + pc.Hz + " Hz\n```\n" + clean + "\n```";
