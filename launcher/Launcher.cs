@@ -1710,29 +1710,51 @@ class LauncherForm : Form {
             game.ErrorDataReceived += (s, e) => { if (e.Data != null) lock (lines) lines.Add(e.Data); };
             game.Start();
             game.BeginErrorReadLine();
+            // (the time left, said all along: from the title screen the test takes AfterTitle seconds; before it, the game's own
+            // "start-up: pipelines N of M" lines give the preparation's pace)
+            const int secs = 92, AfterTitle = 12 + 27 + 20 + secs;
+            Func<int, string> left = t => t >= 90 ? "about " + (t + 30) / 60 + " min left" : t >= 60 ? "about 1 min " + (t - 60) / 10 * 10 + " s left" : "about " + Math.Max(5, t / 5 * 5) + " s left";
             // (1) the title screen: the first frames counted
             var sw = Stopwatch.StartNew();
             Func<bool> atTitle = () => { lock (lines) return lines.Exists(l => l.Contains("frames presented")); };
+            double prepT0 = -1; long prepN0 = 0;
             while (!atTitle()) {
                 if (!running(1000)) throw new Exception("the game closed before its title screen");
                 if (sw.Elapsed.TotalMinutes > 60) throw new Exception("no title screen after an hour");
-                say(sw.Elapsed.TotalSeconds < 30 ? "Starting the game..." : "Preparing effects (once)...  " + (int)sw.Elapsed.TotalMinutes + " min");
+                Match pm = null;
+                lock (lines) for (int k = lines.Count - 1; k >= 0 && k >= lines.Count - 400; k--) {
+                    var m = Regex.Match(lines[k], @"start-up: pipelines (\d+) of (\d+)");
+                    if (m.Success) { pm = m; break; }
+                }
+                if (pm == null) { say(sw.Elapsed.TotalSeconds < 30 ? "Starting the game...  " + left(AfterTitle + 20) : "Starting the game..."); continue; }
+                long n = long.Parse(pm.Groups[1].Value), all = Math.Max(1, long.Parse(pm.Groups[2].Value));
+                double now = sw.Elapsed.TotalSeconds;
+                if (prepT0 < 0) { prepT0 = now; prepN0 = n; }
+                string eta = "";
+                if (n > prepN0 && now - prepT0 >= 20) eta = "  ·  " + left((int)((all - n) * (now - prepT0) / (n - prepN0)) + AfterTitle);
+                say("Preparing effects (once) " + (100 * n / all) + "%" + eta);
             }
-            say("Title screen...");
+            say("Title screen...  " + left(AfterTitle));
             if (!running(12000)) throw new Exception("the game closed at its title screen");
             // (2) Continue: the copy of the last save
-            say("Loading your save...");
-            for (int i = 0; i < 6; i++) { press("0:A"); if (!running(i < 3 ? 4000 : 5000)) throw new Exception("the game closed while loading"); }
+            int rest = AfterTitle - 12;
+            for (int i = 0; i < 6; i++) {
+                say("Loading your save...  " + left(rest));
+                press("0:A");
+                int wait = i < 3 ? 4000 : 5000;
+                if (!running(wait)) throw new Exception("the game closed while loading");
+                rest -= wait / 1000;
+            }
+            say("Loading your save...  " + left(rest));
             if (!running(20000)) throw new Exception("the game closed while loading");
             // (3) walking around; measured after its first 12 seconds
             string[] moves = { "LUP/3000", "RLEFT/800", "LUP/2500", "LLEFT/1500", "LUP/3000", "RRIGHT/1200", "LDOWN/2000", "LRIGHT/1500", "LUP/3000", "RLEFT/1500" };
-            const int secs = 92;
             int from = -1;
             bool exited = false;
             for (int t = 0, i = 0; t < secs; t += 4, i++) {
                 if (t >= 12 && from < 0) lock (lines) from = lines.Count;
                 press("0:" + moves[i % moves.Length]);
-                say("Testing...  " + (secs - t) + " s left");
+                say("Testing...  " + left(secs - t));
                 if (!running(4000)) { exited = true; break; }
             }
             lock (lines) b = Bench.Read(new List<string>(lines), Math.Max(0, from));
