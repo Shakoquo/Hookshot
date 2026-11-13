@@ -1,6 +1,7 @@
 # (Mako) A published release is announced on the Discord server: @everyone, the version, its notes, how to update and the
 # launcher's link. The Discord webhook's address is the repository secret DISCORD_WEBHOOK (never written here).
 # With the secret DISCORD_WEBHOOK_CHANGELOG too, the full notes also go to the changelog channel (no ping there).
+# Release notes with a line <!-- changelog -->: the part above it is the announcement, the part below the changelog.
 name: Discord announcement
 
 on:
@@ -28,6 +29,14 @@ jobs:
         run: |
           if [ -z "$WEBHOOK" ]; then echo "DISCORD_WEBHOOK is not set: nothing posted"; exit 0; fi
           title="${NAME:-$TAG}"
+          # (the announcement: the notes above <!-- changelog -->; the changelog: below it; without the line, the whole notes)
+          NOTES="$(printf '%s' "$NOTES" | tr -d '\r')"
+          if printf '%s' "$NOTES" | grep -q '^<!-- changelog -->'; then
+            FULL="$(printf '%s\n' "$NOTES" | sed '1,/^<!-- changelog -->/d')"
+            NOTES="$(printf '%s\n' "$NOTES" | sed '/^<!-- changelog -->/,$d')"
+          else
+            FULL="$NOTES"
+          fi
           version="$(printf '%s' "$TAG" | sed -E 's/^[^0-9]*//')"
           # (Discord: an embed's text holds at most 4096 characters)
           notes="$(printf '%s' "$NOTES" | head -c 3300)"
@@ -48,8 +57,8 @@ jobs:
           curl -sS --fail-with-body -H "Content-Type: application/json" -d @payload.json "$WEBHOOK"
           echo "posted to Discord"
           # (the changelog channel: the whole notes, cut in parts of at most 4000 characters, no ping)
-          if [ -n "$CHANGELOG" ] && [ -n "$NOTES" ]; then
-            printf '%s' "$NOTES" > notes.txt
+          if [ -n "$CHANGELOG" ] && [ -n "$FULL" ]; then
+            printf '%s' "$FULL" > notes.txt
             python3 - "$title" "$URL" <<'PY'
           import json, sys
           title, url = sys.argv[1], sys.argv[2]
