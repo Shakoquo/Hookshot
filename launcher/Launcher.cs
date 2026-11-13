@@ -2053,9 +2053,7 @@ class LauncherForm : Form {
     string SendReport(string hook, string problem, List<string> logs) {
         try {
             var pc = PcInfo.Read();
-            string ver = "";
-            try { string vf = Path.Combine(dir, "user", "hookshot_vk_version.txt"); if (File.Exists(vf)) ver = File.ReadAllText(vf).Replace("version=", "").Trim(); } catch { }
-            if (ver.Length == 0) ver = Fork.Version;
+            string ver = Installed();   // (as the update check: a patch's tag older than this launcher's release is left over from before a rebuild)
             // (the logs, zipped: a log is under 1 MB, about 100 KB zipped)
             byte[] zip;
             using (var ms = new MemoryStream()) {
