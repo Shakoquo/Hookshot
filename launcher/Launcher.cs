@@ -689,14 +689,14 @@ class LauncherForm : Form {
                               Click = () => OpenUrl(Fork.Home) });
 
         // (tabs)
-        string[] names = { "Recommended", "Graphics", "Game", "Fixes", "FSR", "About", "Master Quest" };
+        string[] names = { "Recommended", "Graphics", "Game", "Fixes", "FSR", "About", "Master Quest", "Mods" };
         float tx = LeftW + 36;
         using (var g = CreateGraphics())
             for (int i = 0; i < names.Length; i++) {
-                float w = g.MeasureString(names[i], Theme.Tab).Width + 26;
+                float w = g.MeasureString(names[i], Theme.Tab).Width + 16;
                 var t = new TabW { Text = names[i], Index = i, R = new RectangleF(tx, 50, w, 40) };
                 tabs.Add(t); widgets.Add(t);
-                tx += w + 6;
+                tx += w + 3;
             }
 
         float cx = LeftW + 36, cw = W - LeftW - 72, colW = (cw - 14) / 2;
@@ -736,6 +736,23 @@ class LauncherForm : Form {
         widgets.Add(new Btn { Text = "Open the Master Quest saves", Style = Btn.Kind.Link, R = new RectangleF(cx + cw - 230, 622, 230, 26), Page = 6,
                               Click = () => { Directory.CreateDirectory(Path.Combine(dir, "user", "save_mq")); OpenFolder(Path.Combine(dir, "user", "save_mq")); } });
 
+        // (Mako 4.1) the Mods tab (Mods.cs): the drop zone, the list; a mod dropped anywhere on the window is installed
+        widgets.Add(new ModDrop { R = new RectangleF(cx, 108, cw, 76), Page = 7, Click = ModsPick });
+        widgets.Add(new ModListW { R = new RectangleF(cx, 228, cw - 14, 370), Page = 7 });
+        AllowDrop = true;
+        DragEnter += (s, e) => {
+            bool files = e.Data.GetDataPresent(DataFormats.FileDrop);
+            e.Effect = files && !ModBusy ? DragDropEffects.Copy : DragDropEffects.None;
+            if (files) { DropHover = true; ShowPage(7); }
+        };
+        DragLeave += (s, e) => DropHover = false;
+        DragDrop += (s, e) => {
+            DropHover = false;
+            var paths = e.Data.GetData(DataFormats.FileDrop) as string[];
+            if (paths != null && paths.Length > 0) BeginInvoke((Action)(() => ModsInstall(paths)));
+        };
+        RefreshMods();
+
         // (bottom row: folders)
         widgets.Add(new Btn { Text = "Saves", HideOn2 = 0, R = new RectangleF(cx, 612, 110, 42), HideOn = 6, Click = () => OpenFolder(Path.Combine(dir, "user", "save")) });
         widgets.Add(new Btn { Text = "Import saves", HideOn2 = 0, R = new RectangleF(cx + 118, 612, 140, 42), HideOn = 6, Click = OnImport });
@@ -757,6 +774,9 @@ class LauncherForm : Form {
         if (cmd.Length > 3 && float.TryParse(cmd[3], out scroll0)) recScroll = scroll0;
 
         // (MAKO_TEST_BENCH=1: Test my PC starts with the window, no question: for testing the test)
+        // (MAKO_TEST_MOD=<a file or folder>: installs it with the window, as a drop would: for testing)
+        string testMod = Environment.GetEnvironmentVariable("MAKO_TEST_MOD");
+        if (!string.IsNullOrEmpty(testMod)) Shown += (s, e) => ModsInstall(testMod.Split('|'));
         if (Environment.GetEnvironmentVariable("MAKO_TEST_BENCH") == "1") Shown += (s, e) => { if (!GameRunning()) StartBench(); };
 
         timer = new System.Windows.Forms.Timer { Interval = 16 };
@@ -790,6 +810,7 @@ class LauncherForm : Form {
 
     public void ShowPage(int k) {
         if (k == PageNow && pageFade >= 1 && tabW > 0) return;
+        if (k == 7 && k != PageNow && !ModBusy) RefreshMods();
         PageNow = k; pageFade = 0;
     }
 
@@ -969,6 +990,7 @@ class LauncherForm : Form {
                         StringAlignment.Near, StringAlignment.Near);
         if (PageNow == 4) PaintFsr(g, x);
         if (PageNow == 6) PaintMasterQuest(g, x);
+        if (PageNow == 7) PaintMods(g, x);
         if (PageNow == 5) {
             var r = new RectangleF(x, 112, W - LeftW - 72, 340);
             using (var p = Theme.Round(r, 14)) {
@@ -1028,6 +1050,95 @@ class LauncherForm : Form {
                     new RectangleF(x, 426, cw, 20), StringAlignment.Center, StringAlignment.Center);
         Theme.Text_(g, "DIFFICULTY", Theme.Caps, Theme.Faint, new RectangleF(x, 526, 300, 16), StringAlignment.Near, StringAlignment.Center);
         Theme.Text_(g, "Applies at the next start.", Theme.Small, Theme.Faint, new RectangleF(x, 622, 300, 26), StringAlignment.Near, StringAlignment.Center);
+    }
+
+    // ---- (Mako 4.1) mods ----
+    public List<ModInfo> ModItems = new List<ModInfo>();
+    public bool ModBusy, DropHover;
+    public string ModStatus = ""; Color modStatusColor = Theme.Dim;
+    public float ModScroll;
+
+    void RefreshMods() {
+        try { ModItems = Mods.List(dir); } catch { ModItems = new List<ModInfo>(); }
+        float total = ModItems.Count * (ModListW.RowH + ModListW.Gap) - ModListW.Gap;
+        ModScroll = Math.Max(0, Math.Min(ModScroll, Math.Max(0, total - 370)));
+    }
+
+    void PaintMods(Graphics g, float x) {
+        float cw = W - LeftW - 72;
+        Theme.Text_(g, "YOUR MODS" + (ModItems.Count > 0 ? "  ·  " + ModItems.Count : ""), Theme.Caps, Theme.Faint, new RectangleF(x, 192, 200, 16), StringAlignment.Near, StringAlignment.Center);
+        Theme.Text_(g, "Lower in the list wins when two mods change the same file  ·  applies at the next start", Theme.Small, Theme.Faint,
+                    new RectangleF(x + 160, 190, cw - 160, 20), StringAlignment.Far, StringAlignment.Center);
+        if (ModStatus.Length > 0 && !ModBusy)
+            Theme.Text_(g, ModStatus, Theme.Small, modStatusColor, new RectangleF(x, 208, cw, 18), StringAlignment.Near, StringAlignment.Center);
+    }
+
+    bool ModsLocked() {
+        if (ModBusy) return true;
+        if (GameRunning()) { MessageBox.Show(this, "Close the game first: it reads the mods when it starts.", Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Information); return true; }
+        return false;
+    }
+
+    void ModsPick() {
+        if (ModsLocked()) return;
+        using (var d = new OpenFileDialog { Title = "Choose a mod", Filter = "Mods (*.zip; *.7z; *.rar)|*.zip;*.7z;*.rar|All files|*.*", Multiselect = true })
+            if (d.ShowDialog(this) == DialogResult.OK) ModsInstall(d.FileNames);
+    }
+
+    void ModsInstall(string[] paths) {
+        ShowPage(7);
+        if (ModsLocked()) return;
+        var todo = new List<string>();
+        foreach (var p in paths) {
+            if (Directory.Exists(p)) todo.Add(p);
+            else if (File.Exists(p) && Array.IndexOf(Mods.Kinds, Path.GetExtension(p).ToLowerInvariant()) >= 0) todo.Add(p);
+        }
+        if (todo.Count == 0) { ModStatus = "That isn't a mod: drop a .zip, .7z or .rar file, or a folder."; modStatusColor = Theme.Amber; return; }
+        ModBusy = true;
+        new Thread(() => {
+            var lines = new List<string>(); bool allOk = true;
+            foreach (var p in todo) {
+                string shown = Path.GetFileName(p.TrimEnd('\\'));
+                BeginInvoke((Action)(() => ModStatus = shown));
+                bool ok; lines.Add(Mods.Install(dir, p, out ok)); allOk &= ok;
+            }
+            BeginInvoke((Action)(() => {
+                ModBusy = false;
+                ModStatus = string.Join("  ", lines.ToArray()); modStatusColor = allOk ? Theme.Green : Theme.Amber;
+                RefreshMods();
+                float total = ModItems.Count * (ModListW.RowH + ModListW.Gap) - ModListW.Gap;
+                ModScroll = Math.Max(0, total - 370);   // (the new one, at the bottom, in view)
+                if (ModStatus.Length > 110) MessageBox.Show(this, string.Join("\n\n", lines.ToArray()), Fork.Name, MessageBoxButtons.OK, allOk ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }));
+        }) { IsBackground = true }.Start();
+    }
+
+    void ModChange(Action<List<ModInfo>> change, string done) {
+        if (ModsLocked()) return;
+        try {
+            var list = Mods.List(dir);
+            change(list);
+            Mods.Write(dir, list);
+            ModStatus = done; modStatusColor = Theme.Dim;
+        } catch (Exception e) { ModStatus = "Could not change the mods folder: " + e.Message; modStatusColor = Theme.Amber; }
+        RefreshMods();
+    }
+    public void ModToggle(int i) {
+        if (i < 0 || i >= ModItems.Count) return;
+        string name = ModItems[i].Name; bool on = !ModItems[i].On;
+        ModChange(l => { if (i < l.Count) l[i].On = on; }, name + (on ? " is on." : " is off."));
+    }
+    public void ModMove(int i, int by) {
+        int j = i + by;
+        if (i < 0 || j < 0 || i >= ModItems.Count || j >= ModItems.Count) return;
+        ModChange(l => { if (j < l.Count) { var m = l[i]; l[i] = l[j]; l[j] = m; } }, "Order changed.");
+    }
+    public void ModRemove(int i) {
+        if (i < 0 || i >= ModItems.Count || ModsLocked()) return;
+        string name = ModItems[i].Name, folder = ModItems[i].Folder;
+        if (MessageBox.Show(this, "Remove " + name + "?\nIts files go to the Recycle Bin.", Fork.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        try { Mods.Remove(folder); ModChange(l => { }, name + " removed (in the Recycle Bin)."); }
+        catch (Exception e) { ModStatus = "Could not remove " + name + ": " + e.Message; modStatusColor = Theme.Amber; RefreshMods(); }
     }
 
     // ---- mouse ----
@@ -1870,6 +1981,10 @@ class LauncherForm : Form {
 
     protected override void OnMouseWheel(MouseEventArgs e) {
         base.OnMouseWheel(e);
+        if (PageNow == 7) {
+            float total = ModItems.Count * (ModListW.RowH + ModListW.Gap) - ModListW.Gap;
+            ModScroll = Math.Max(0, Math.Min(ModScroll - e.Delta * 0.5f, Math.Max(0, total - 370)));
+        }
         if (PageNow == 0) recScroll = Math.Max(0, Math.Min(recScroll - e.Delta * 0.6f, Math.Max(0, recHeight - 488)));
     }
 
