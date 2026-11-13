@@ -134,7 +134,7 @@ static class Mods {
         try {
             string src = source;
             if (!isDir) {
-                work = Path.Combine(root, ".installing-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                work = Path.Combine(root, ".i" + Guid.NewGuid().ToString("N").Substring(0, 6));   // (short: deep archives stay under Windows' 260-character paths)
                 Directory.CreateDirectory(work);
                 string err = Extract(source, work);
                 if (err != null) return err;
@@ -160,10 +160,26 @@ static class Mods {
                 bool meaningless = own.Length == 0 || Regex.IsMatch(own, "^[0-9A-Fa-f]{16}$") ||
                                    new[] { "contents", "atmosphere", "mods", "switch", "romfs", "mod" }.Contains(own.ToLowerInvariant());
                 string label = meaningless ? archiveName : CleanName(own);
-                if (usable.Count > 1 && meaningless) label = archiveName + " " + (i + 1);
-                else if (usable.Count > 1 && !label.Equals(archiveName, StringComparison.OrdinalIgnoreCase) && archiveName.Length > 0 &&
-                         label.Length < 24 && !label.ToLowerInvariant().Contains(archiveName.ToLowerInvariant()))
-                    label = archiveName + " - " + label;
+                if (usable.Count > 1) {
+                    // (several in one archive: the archive's name, then every folder down to it that says something, without the
+                    // "1 - " numbers: "Classic Logo Version/1 - Default HUD Mod" -> "<archive> - Classic Logo Version - Default HUD Mod")
+                    var parts = new List<string>();
+                    string rel = f.Root.Length > src.Length ? f.Root.Substring(src.Length).Trim('\\') : "";
+                    foreach (var part in rel.Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries)) {
+                        string pl = part.ToLowerInvariant();
+                        if (Regex.IsMatch(part, "^[0-9A-Fa-f]{16}$") || new[] { "contents", "atmosphere", "mods", "switch", "romfs", "mod" }.Contains(pl)) continue;
+                        string clean = CleanName(Regex.Replace(part, @"^\s*\d+\s*[-.)_]\s*", ""));
+                        if (clean.Length == 0 || clean.Equals(archiveName, StringComparison.OrdinalIgnoreCase)) continue;
+                        parts.Add(clean);
+                    }
+                    // (short: the game opens its files with Windows' 260-character paths; the archive's name only when it fits)
+                    string own2 = string.Join(" - ", parts.ToArray());
+                    label = parts.Count == 0 ? archiveName + " " + (i + 1) : (archiveName.Length > 0 && archiveName.Length + 3 + own2.Length <= 50 ? archiveName + " - " + own2 : own2);
+                    if (label.Length > 50) {   // (cut at a whole word)
+                        int cut = label.LastIndexOf(' ', 50);
+                        label = label.Substring(0, cut > 20 ? cut : 50).TrimEnd(' ', '-', '.');
+                    }
+                }
                 f.Label = label.Length > 0 ? label : "Mod";
                 foreach (var file in SafeFiles(f.Romfs)) f.Rel.Add(file.Substring(f.Romfs.Length + 1).Replace('\\', '/').ToLowerInvariant());
             }
@@ -199,6 +215,8 @@ static class Mods {
             if (variants) line = "Installed " + archiveName + ": it comes in " + usable.Count + " versions. The first is on; switch on the one you want in the list.";
             if (codeLeft) line += " Its code part (exefs or cheats) is left out: Mako doesn't use those.";
             return line;
+        } catch (PathTooLongException) {
+            return "Could not install " + archiveName + ": its folders are too deep for this game folder's place. Move the game folder somewhere shorter (for example C:\\Mako) and try again.";
         } catch (Exception e) {
             return "Could not install " + archiveName + ": " + e.Message;
         } finally {
@@ -258,7 +276,7 @@ static class Mods {
         foreach (char c in Path.GetInvalidFileNameChars()) s = s.Replace(c.ToString(), "");
         s = Regex.Replace(s, @"\s+", " ").Trim().TrimStart('-', '.', ' ');
         s = Regex.Replace(s, @"^\d{2,3} ", "");   // (not to be read as a list position)
-        if (s.Length > 60) s = s.Substring(0, 60).Trim();
+        if (s.Length > 50) s = s.Substring(0, 50).Trim();
         return s.TrimEnd('.', ' ');
     }
 

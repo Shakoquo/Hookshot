@@ -223,7 +223,7 @@ static class Fork {
     public const string Page = "https://github.com/Shakoquo/Mako/releases/latest";
     public const string Home = "https://github.com/Shakoquo/Mako";
     public const string GameExe = "hookshot.exe";
-    public const string Label = "";             // (a test build's own name, e.g. "v4.1 TEST": shown instead of the version)
+    public const string Label = "";                    // (a test build's own name, e.g. "v4.1 TEST": shown instead of the version)
     public static string Me(string installed) { return Label.Length > 0 ? Label : Shown(installed); }
     public static string Shown(string v) { var m = Regex.Match(v ?? "", @"\d+(\.\d+)*"); return m.Success ? "v" + m.Value : v; }
 }
