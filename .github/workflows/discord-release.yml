@@ -1,5 +1,6 @@
 # (Mako) A published release is announced on the Discord server: @everyone, the version, its notes, how to update and the
 # launcher's link. The Discord webhook's address is the repository secret DISCORD_WEBHOOK (never written here).
+# With the secret DISCORD_WEBHOOK_CHANGELOG too, the full notes also go to the changelog channel (no ping there).
 name: Discord announcement
 
 on:
@@ -18,6 +19,7 @@ jobs:
       - name: Post to Discord
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          CHANGELOG: ${{ secrets.DISCORD_WEBHOOK_CHANGELOG }}
           TAG: ${{ github.event.release.tag_name }}
           NAME: ${{ github.event.release.name }}
           NOTES: ${{ github.event.release.body }}
@@ -45,3 +47,28 @@ jobs:
             }' > payload.json
           curl -sS --fail-with-body -H "Content-Type: application/json" -d @payload.json "$WEBHOOK"
           echo "posted to Discord"
+          # (the changelog channel: the whole notes, cut in parts of at most 4000 characters, no ping)
+          if [ -n "$CHANGELOG" ] && [ -n "$NOTES" ]; then
+            printf '%s' "$NOTES" > notes.txt
+            python3 - "$title" "$URL" <<'PY'
+          import json, sys
+          title, url = sys.argv[1], sys.argv[2]
+          text = open("notes.txt", encoding="utf-8").read()
+          parts, cur = [], ""
+          for line in text.splitlines(keepends=True):
+              while len(line) > 4000:
+                  parts.append(cur) if cur else None; cur = ""; parts.append(line[:4000]); line = line[4000:]
+              if len(cur) + len(line) > 4000:
+                  parts.append(cur); cur = ""
+              cur += line
+          if cur: parts.append(cur)
+          for i, p in enumerate(parts):
+              e = {"description": p, "color": 3721471}
+              if i == 0: e.update(title="Changelog · " + title, url=url)
+              json.dump({"allowed_mentions": {"parse": []}, "embeds": [e]}, open("changelog_%d.json" % i, "w"))
+          PY
+            for f in $(ls changelog_*.json | sort -V); do
+              curl -sS --fail-with-body -H "Content-Type: application/json" -d @"$f" "$CHANGELOG"; sleep 1
+            done
+            echo "changelog posted"
+          fi
