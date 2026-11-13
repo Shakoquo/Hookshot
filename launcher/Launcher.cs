@@ -737,9 +737,10 @@ class LauncherForm : Form {
                               Click = () => { Directory.CreateDirectory(Path.Combine(dir, "user", "save_mq")); OpenFolder(Path.Combine(dir, "user", "save_mq")); } });
 
         // (bottom row: folders)
-        widgets.Add(new Btn { Text = "Saves", HideOn2 = 0, R = new RectangleF(cx, 612, 130, 42), HideOn = 6, Click = () => OpenFolder(Path.Combine(dir, "user", "save")) });
-        widgets.Add(new Btn { Text = "Import saves", HideOn2 = 0, R = new RectangleF(cx + 140, 612, 150, 42), HideOn = 6, Click = OnImport });
-        widgets.Add(new Btn { Text = "Game folder", HideOn2 = 0, R = new RectangleF(cx + 300, 612, 150, 42), HideOn = 6, Click = () => OpenFolder(dir) });
+        widgets.Add(new Btn { Text = "Saves", HideOn2 = 0, R = new RectangleF(cx, 612, 110, 42), HideOn = 6, Click = () => OpenFolder(Path.Combine(dir, "user", "save")) });
+        widgets.Add(new Btn { Text = "Import saves", HideOn2 = 0, R = new RectangleF(cx + 118, 612, 140, 42), HideOn = 6, Click = OnImport });
+        widgets.Add(new Btn { Text = "Send logs", HideOn2 = 0, R = new RectangleF(cx + 266, 612, 120, 42), HideOn = 6, Click = OnSendLogs });
+        widgets.Add(new Btn { Text = "Game folder", HideOn2 = 0, R = new RectangleF(cx + 394, 612, 140, 42), HideOn = 6, Click = () => OpenFolder(dir) });
 
         // (Mako) the Recommended tab: this PC read once, and its Apply button
         BuildRecommendations();
@@ -754,6 +755,9 @@ class LauncherForm : Form {
         tabX = tabs[PageNow].R.X; tabW = tabs[PageNow].R.Width;
         float scroll0;   // (a third argument: the Recommended tab scrolled, for screenshots)
         if (cmd.Length > 3 && float.TryParse(cmd[3], out scroll0)) recScroll = scroll0;
+
+        // (MAKO_TEST_BENCH=1: Test my PC starts with the window, no question: for testing the test)
+        if (Environment.GetEnvironmentVariable("MAKO_TEST_BENCH") == "1") Shown += (s, e) => { if (!GameRunning()) StartBench(); };
 
         timer = new System.Windows.Forms.Timer { Interval = 16 };
         timer.Tick += (s, e) => Step();
@@ -1666,6 +1670,11 @@ class LauncherForm : Form {
                             "Your own saves are never touched.\nLeave the mouse, keyboard and controller alone until the game closes.\n" +
                             "(After an update the game first prepares its effects, once: that start takes longer.)\n\nStart the test?",
                             Fork.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        StartBench();
+    }
+
+    void StartBench() {
+        string exe = Path.Combine(dir, Fork.GameExe);
         string user = Path.Combine(dir, "user"), save = Path.Combine(user, "save"), copy = Path.Combine(user, "save_bench"), input = Path.Combine(user, "bench_input.txt");
         bool hadSave;
         try {
@@ -1948,6 +1957,137 @@ class LauncherForm : Form {
         MessageBox.Show(this, "Put saves from another emulator here (the folder holding slot_00, slot_01… or a folder above it).\n" +
                         "They are copied into the game at the next start, and the saves you had are kept in a backup folder.",
                         "Import saves", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    // ---- (Mako 4.0) Send logs: the player's words and the game's last logs, to the Mako server's private reports channel ----
+    // (the Discord webhook is launcher\report_webhook.txt, embedded at build time and kept out of the public source)
+    static string ReportHook() {
+        try {
+            using (var st = typeof(LauncherForm).Assembly.GetManifestResourceStream("report_webhook.txt"))
+                if (st != null) using (var r = new StreamReader(st)) return r.ReadToEnd().Trim();
+        } catch { }
+        return "";
+    }
+
+    // (the Windows account's name appears in the logs' paths: replaced before anything leaves the PC)
+    static string Scrub(string text) {
+        string name = Environment.UserName ?? "";
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) ?? "";
+        if (home.Length > 3) text = Regex.Replace(text, Regex.Escape(home), @"C:\Users\<user>", RegexOptions.IgnoreCase);
+        if (name.Length >= 3) text = Regex.Replace(text, @"(?<![A-Za-z0-9])" + Regex.Escape(name) + @"(?![A-Za-z0-9])", "<user>", RegexOptions.IgnoreCase);
+        return text;
+    }
+
+    void OnSendLogs() {
+        string hook = ReportHook();
+        if (hook.Length == 0) {
+            MessageBox.Show(this, "Sending logs is not set up in this build. Open the game folder and send hookshot_log.txt on the Mako Discord.", Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        string stamp = Path.Combine(dir, "user", "report_last.txt");
+        try {
+            if (File.Exists(stamp) && (DateTime.UtcNow - File.GetLastWriteTimeUtc(stamp)).TotalMinutes < 5) {
+                MessageBox.Show(this, "A report was sent a moment ago. Wait a few minutes before sending another.", Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+        } catch { }
+        var logs = new List<string>();
+        foreach (var n in new[] { "hookshot_log.txt", "hookshot_log.1.txt" }) if (File.Exists(Path.Combine(dir, n))) logs.Add(n);
+        if (logs.Count == 0) {
+            MessageBox.Show(this, "There is no game log yet: start the game once, then send.", Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using (var f = new Form()) {
+            f.Text = "Send logs"; f.FormBorderStyle = FormBorderStyle.FixedDialog; f.MaximizeBox = false; f.MinimizeBox = false;
+            f.StartPosition = FormStartPosition.CenterParent; f.ClientSize = new Size(520, 330); f.BackColor = Theme.Bg1; f.ForeColor = Theme.Text;
+            f.Font = new Font("Segoe UI", 9.5f);
+            var head = new Label { Text = "What went wrong? Where were you in the game, and what happened?", AutoSize = false, Bounds = new Rectangle(16, 14, 488, 22) };
+            var box = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, MaxLength = 1500, Bounds = new Rectangle(16, 40, 488, 150),
+                                    BackColor = Theme.Card, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle };
+            var what = new Label { AutoSize = false, Bounds = new Rectangle(16, 198, 488, 74), ForeColor = Theme.Dim,
+                                   Text = "Sent to the Mako team's private channel: your text, the game's last logs (" + string.Join(", ", logs) + "), " +
+                                          "your graphics card, processor, memory and Mako version. Your Windows account name is removed from the logs. " +
+                                          "Nothing else: no saves, no game files." };
+            var send = new Button { Text = "Send", Bounds = new Rectangle(300, 284, 100, 32), FlatStyle = FlatStyle.Flat, BackColor = Theme.Blue, ForeColor = Color.White };
+            var cancel = new Button { Text = "Cancel", Bounds = new Rectangle(404, 284, 100, 32), FlatStyle = FlatStyle.Flat, BackColor = Theme.Card, ForeColor = Theme.Text, DialogResult = DialogResult.Cancel };
+            send.Click += (s, e) => {
+                if (box.Text.Trim().Length < 5) { MessageBox.Show(f, "Describe the problem in a few words first.", Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+                f.DialogResult = DialogResult.OK;
+            };
+            f.Controls.AddRange(new Control[] { head, box, what, send, cancel });
+            f.AcceptButton = null; f.CancelButton = cancel;
+            if (f.ShowDialog(this) != DialogResult.OK) return;
+            string problem = box.Text.Trim();
+            string err = SendReport(hook, problem, logs);
+            if (err == null) {
+                try { Directory.CreateDirectory(Path.Combine(dir, "user")); File.WriteAllText(stamp, DateTime.UtcNow.ToString("o")); } catch { }
+                MessageBox.Show(this, "Sent. Thank you: the Mako team will read it.", Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            } else
+                MessageBox.Show(this, "The report could not be sent:\n" + err + "\n\nYou can send hookshot_log.txt (game folder) on the Mako Discord instead.", Fork.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    string SendReport(string hook, string problem, List<string> logs) {
+        try {
+            var pc = PcInfo.Read();
+            string ver = "";
+            try { string vf = Path.Combine(dir, "user", "hookshot_vk_version.txt"); if (File.Exists(vf)) ver = File.ReadAllText(vf).Replace("version=", "").Trim(); } catch { }
+            if (ver.Length == 0) ver = Fork.Version;
+            // (the logs, zipped: a log is under 1 MB, about 100 KB zipped)
+            byte[] zip;
+            using (var ms = new MemoryStream()) {
+                using (var za = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                    foreach (var n in logs) {
+                        string text;
+                        using (var fs = new FileStream(Path.Combine(dir, n), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                        using (var r = new StreamReader(fs, Encoding.UTF8)) text = r.ReadToEnd();
+                        var e = za.CreateEntry(n, System.IO.Compression.CompressionLevel.Optimal);
+                        using (var w = new StreamWriter(e.Open(), new UTF8Encoding(false))) w.Write(Scrub(text));
+                    }
+                zip = ms.ToArray();
+            }
+            string clean = Scrub(problem).Replace("```", "` ` `");
+            string content = "**Report** · Mako " + ver + "\n" +
+                             "GPU: " + (pc.Gpu.Length > 0 ? pc.Gpu : "?") + (pc.VramMB > 0 ? " (" + pc.VramGB + " GB)" : "") +
+                             " · CPU: " + (pc.Cpu.Length > 0 ? pc.Cpu : "?") + " (" + pc.Threads + " threads) · RAM: " + pc.RamGB + " GB · Screen: " +
+                             pc.ScreenW + "x" + pc.ScreenH + " " + pc.Hz + " Hz\n```\n" + clean + "\n```";
+            if (content.Length > 1990) content = content.Substring(0, 1986) + "\n```";
+            string json = "{\"content\":" + JsonString(content) + ",\"allowed_mentions\":{\"parse\":[]}}";
+            string boundary = "----mako" + Guid.NewGuid().ToString("N");
+            byte[] body;
+            using (var ms = new MemoryStream()) {
+                Action<string> put = t => { var b = Encoding.UTF8.GetBytes(t); ms.Write(b, 0, b.Length); };
+                put("--" + boundary + "\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n" + json + "\r\n");
+                put("--" + boundary + "\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"mako-logs.zip\"\r\nContent-Type: application/zip\r\n\r\n");
+                ms.Write(zip, 0, zip.Length);
+                put("\r\n--" + boundary + "--\r\n");
+                body = ms.ToArray();
+            }
+            var req = (HttpWebRequest)WebRequest.Create(hook);
+            req.Method = "POST"; req.ContentType = "multipart/form-data; boundary=" + boundary; req.UserAgent = "Mako-launcher"; req.Timeout = 30000;
+            req.ContentLength = body.Length;
+            using (var rs = req.GetRequestStream()) rs.Write(body, 0, body.Length);
+            using (var resp = (HttpWebResponse)req.GetResponse()) { }
+            return null;
+        } catch (WebException we) {
+            var hr = we.Response as HttpWebResponse;
+            return hr != null ? "the server answered " + (int)hr.StatusCode : we.Message;
+        } catch (Exception ex) { return ex.Message; }
+    }
+
+    static string JsonString(string t) {
+        var sb = new StringBuilder("\"");
+        foreach (char c in t) {
+            if (c == '"') sb.Append("\\\"");
+            else if (c == '\\') sb.Append("\\\\");
+            else if (c == '\n') sb.Append("\\n");
+            else if (c == '\r') { }
+            else if (c == '\t') sb.Append("\\t");
+            else if (c < 0x20) sb.Append("\\u").Append(((int)c).ToString("x4"));
+            else sb.Append(c);
+        }
+        return sb.Append('"').ToString();
     }
 
     void OnPlay() { OnPlay(false); }
