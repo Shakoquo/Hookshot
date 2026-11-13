@@ -130,6 +130,20 @@ static int fps_max(void) {
     }
     return v;
 }
+/* (Mako 4.0) A steady pace under 60: where the game cannot hold 60 (Castle Town's market: 18-30 ms frames, 45-48 fps on a
+   Ryzen 5 7500F), each frame is shown one 1/N s after the last, so they come evenly instead of in short and long steps; frame
+   generation doubles an even rate. The game's time step stays real time (realtime_step follows the frames' own time).
+   hookshot_options.ini steady_fps=<30-59> (0: off, the default), HOS_PACE_FPS over it; only with the 60 cap. */
+static int pace_fps(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("HOS_PACE_FPS");
+        const int want = e ? atoi(e) : hos_ini_option("steady_fps", 0);
+        v = want >= 30 && want < 60 && fps_max() == 60 ? want : 0;
+        if (v) hos_log("vi: steady pace %d fps: each frame shown 1/%d s after the last", v, v);
+    }
+    return v;
+}
 static int64_t next_frame_at, window_start, frames_in_window;
 static volatile LONG64 presents;
 int hos_vi_native_interval(Ctx *c, int requested) {
@@ -482,7 +496,7 @@ void hos_vi_native_presented(const int64_t phases[4]) {
         if (ms < 0) ms = getenv("HOS_FRAME_SLEEP_MS") ? atoi(getenv("HOS_FRAME_SLEEP_MS")) : 0;
         if (ms) hos_sleep_ns(ms * 1000000LL);
     }
-    const int64_t period = 1000000000LL / fps_max() * present_interval, now = hos_now_ns();
+    const int64_t period = pace_fps() ? 1000000000LL / pace_fps() : 1000000000LL / fps_max() * present_interval, now = hos_now_ns();
     realtime_step(now);
     /* (behind by more than a frame: the next one is paced from now, with no burst to catch up) */
     next_frame_at = next_frame_at && now - next_frame_at < period ? next_frame_at + period : now + period;
