@@ -1,0 +1,47 @@
+# (Mako) A published release is announced on the Discord server: @everyone, the version, its notes, how to update and the
+# launcher's link. The Discord webhook's address is the repository secret DISCORD_WEBHOOK (never written here).
+name: Discord announcement
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    if: ${{ !github.event.release.prerelease && !github.event.release.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          TAG: ${{ github.event.release.tag_name }}
+          NAME: ${{ github.event.release.name }}
+          NOTES: ${{ github.event.release.body }}
+          URL: ${{ github.event.release.html_url }}
+          LATEST: https://github.com/${{ github.repository }}/releases/latest
+        run: |
+          if [ -z "$WEBHOOK" ]; then echo "DISCORD_WEBHOOK is not set: nothing posted"; exit 0; fi
+          title="${NAME:-$TAG}"
+          version="$(printf '%s' "$TAG" | sed -E 's/^[^0-9]*//')"
+          # (Discord: an embed's text holds at most 4096 characters)
+          notes="$(printf '%s' "$NOTES" | head -c 3300)"
+          [ "${#NOTES}" -gt 3300 ] && notes="$notes"$'\n\n'"… the full list is on the release page."
+          how=$'**How to update**\nOpen the Mako Launcher: it finds the new version by itself and installs it in one click.\n\n'
+          how+=$'**New here?**\nDownload the launcher from the release page: '"$LATEST"
+          jq -n --arg title "$title" --arg version "$version" --arg notes "$notes" --arg how "$how" --arg url "$URL" '{
+              content: ("@everyone **Mako " + $version + " is out!**"),
+              allowed_mentions: { parse: ["everyone"] },
+              embeds: [{
+                title: $title,
+                url: $url,
+                color: 3721471,
+                description: (if $notes == "" then $how else ($notes + "\n\n" + $how) end),
+                footer: { text: "Mako · a free, open-source tool" }
+              }]
+            }' > payload.json
+          curl -sS --fail-with-body -H "Content-Type: application/json" -d @payload.json "$WEBHOOK"
+          echo "posted to Discord"
