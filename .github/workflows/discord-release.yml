@@ -41,8 +41,8 @@ jobs:
           # (Discord: an embed's text holds at most 4096 characters)
           notes="$(printf '%s' "$NOTES" | head -c 3300)"
           [ "${#NOTES}" -gt 3300 ] && notes="$notes"$'\n\n'"… the full list is on the release page."
-          how=$'**How to update**\nOpen the Mako Launcher: it finds the new version by itself and installs it in one click.\n\n'
-          how+=$'**New here?**\nDownload the launcher from the release page: '"$LATEST"
+          how=$'**How to update**\nOpen the Mako Launcher and click Update: one rebuild, your saves and settings are kept.\n\n'
+          how+=$'**New here?**\nDownload MakoBuilder.zip from the release page: '"$LATEST"
           jq -n --arg title "$title" --arg version "$version" --arg notes "$notes" --arg how "$how" --arg url "$URL" '{
               content: ("@everyone **Mako " + $version + " is out!**"),
               allowed_mentions: { parse: ["everyone"] },
