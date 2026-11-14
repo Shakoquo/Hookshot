@@ -857,7 +857,10 @@ def main():
                                 if f.endswith(".h"))
     if LINUX:
         host_deps += b"".join(open(os.path.join(POSIX, f), "rb").read() for f in sorted(os.listdir(POSIX)) if f.endswith(".h"))
-        host_deps += open(os.path.join(GPU, "vk", "vk_api.h"), "rb").read()
+    # (Mako 4.1: on Windows too. The host's sources include vk_api.h (rx_backend.c: MKWVK_API_VERSION), and with it only in the
+    # Linux keys a build after an API change reused host objects made before it: the exe asked for the old API, the back end
+    # refused it, and the game ran on WebGPU)
+    host_deps += open(os.path.join(GPU, "vk", "vk_api.h"), "rb").read()
     host_deps += open(os.path.join(GPU, "vk", "dlss_math.h"), "rb").read()   # (host/rx_backend.c's DLSS jitter)
     host_deps += ffmpeg_version_key()
     jobs += [(cc, s, os.path.join(obj_dir, "host_" + os.path.basename(s)[:-2] + ".o"),
