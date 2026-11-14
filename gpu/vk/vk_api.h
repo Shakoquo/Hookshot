@@ -208,6 +208,9 @@ typedef struct MkwVkRenderer {
     void (*option_set)(int id, int value);
     /* (version 14) one coherent camera-jitter sample, without per-axis queries */
     void (*jitter_sample)(MkwVkJitter *out);
+    /* (Mako stutters) a program got its shaders (nvnProgramSetShaders): their code can be read and parsed now, on a worker,
+       before its first draw. Optional (null: nothing) */
+    void (*nvn_program_set)(const nvn_prog *p);
 } MkwVkRenderer;
 
 /* the DLL's one export: null when Vulkan is not usable (the executable then falls back to WebGPU) */

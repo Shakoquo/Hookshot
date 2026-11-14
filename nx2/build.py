@@ -926,7 +926,9 @@ def main():
         for f in sorted(translator) + [os.path.join(vk, n) for n in ("vk_shader.cpp", "vk_bank.cpp", "vk_state.h", "vk_api.h")]:
             with open(f, "rb") as src:
                 stamp.update(os.path.relpath(f, vk).replace("\\", "/").encode() + src.read().replace(bytes((13, 10)), bytes((10,))))
-        shader_stamp = "-DHOOKSHOT_SHADER_STAMP=0x%sull" % stamp.hexdigest()[:16]
+        # (HOOKSHOT_SHADER_STAMP=<16 hex>: that stamp instead, for a change to these files that does not change what translation makes
+        # (when a program is parsed, not how): the players' program caches are kept)
+        shader_stamp = "-DHOOKSHOT_SHADER_STAMP=0x%sull" % (os.environ.get("HOOKSHOT_SHADER_STAMP") or stamp.hexdigest()[:16])
         vflags = target() + CPU + (["-fPIC", "-I" + POSIX, "-D_GNU_SOURCE"] if LINUX else []) + [   # (hookshot: the replay is the frame's limit now)
             # (what the code takes for granted, which newer C++ libraries bring in by themselves and older ones do not: issue 48)
             "-include", "algorithm", "-include", "cstdio", "-include", "cstdlib", "-include", "cstring", "-include", "functional",
