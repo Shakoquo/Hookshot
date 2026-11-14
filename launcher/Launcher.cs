@@ -33,9 +33,28 @@ static class Fsr {
     };
     static string gpu;
     /// the display adapter's name, a Radeon first (the registry's display class: no WMI)
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct DisplayDevice {
+        public int cb;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+        public int StateFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+    }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplayDevices(string device, uint i, ref DisplayDevice d, uint flags);
     public static string Gpu() {
         if (gpu != null) return gpu;
         gpu = "";
+        // (Mako 4.1) the adapter driving the main screen first: the registry's display class keeps the cards taken out of
+        // the PC too, and a player who changed an RX 7800 XT for an RX 7900 XTX was still shown (and reported) as the 7800 XT
+        try {
+            for (uint i = 0; i < 16; i++) {
+                var d = new DisplayDevice { cb = Marshal.SizeOf(typeof(DisplayDevice)) };
+                if (!EnumDisplayDevices(null, i, ref d, 0)) break;
+                if ((d.StateFlags & 4) != 0 && !string.IsNullOrEmpty(d.DeviceString)) { gpu = d.DeviceString.Trim(); return gpu; }   // (4: the primary device)
+            }
+        } catch { }
         try {
             using (var cls = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}")) {
                 if (cls != null)
@@ -216,14 +235,14 @@ static class Fork {
     public const string Name = "Mako";
     // (the update check compares the first number of the tags: the first Mako release must be numbered above amd-fix-2.1, or the
     // 2.x launchers players have would think it older and never offer it)
-    public const string Base = "mako-4.0";      // (host/hos_update.c HOOKSHOT_FORK_BASE: the exe this launcher ships with)
-    public const string Version = "mako-4.0";   // (HOOKSHOT_FORK_VERSION)
-    public const int Api = 15;                  // (gpu/vk/vk_api.h MKWVK_API_VERSION)
+    public const string Base = "mako-4.1";      // (host/hos_update.c HOOKSHOT_FORK_BASE: the exe this launcher ships with)
+    public const string Version = "mako-4.1";   // (HOOKSHOT_FORK_VERSION)
+    public const int Api = 16;                  // (gpu/vk/vk_api.h MKWVK_API_VERSION)
     public const string Api_Url = "https://api.github.com/repos/Shakoquo/Mako/releases/latest";
     public const string Page = "https://github.com/Shakoquo/Mako/releases/latest";
     public const string Home = "https://github.com/Shakoquo/Mako";
     public const string GameExe = "hookshot.exe";
-    public const string Label = "";                    // (a test build's own name, e.g. "v4.1 TEST": shown instead of the version)
+    public const string Label = "v4.1 EXPERIMENTAL";                  // (a test build's own name, e.g. "v4.1 TEST": shown instead of the version)
     public static string Me(string installed) { return Label.Length > 0 ? Label : Shown(installed); }
     public static string Shown(string v) { var m = Regex.Match(v ?? "", @"\d+(\.\d+)*"); return m.Success ? "v" + m.Value : v; }
 }
@@ -308,6 +327,9 @@ abstract class Widget {
     public virtual void Down(PointF p, LauncherForm ui) { }
     public virtual bool Animating { get { return false; } }
     public virtual void Tick() { }
+    public virtual void Press(PointF p, LauncherForm ui) { }     // (Mako 4.1: the button went down on it)
+    public virtual void DragTo(PointF p, LauncherForm ui) { }    // (moved with the button down)
+    public virtual void Release(LauncherForm ui) { }             // (the button let go, wherever)
 }
 
 class Btn : Widget {
@@ -495,11 +517,93 @@ class GoldChoice : Widget {
 
 class TabW : Widget {
     public string Text; public int Index;
-    public override void Down(PointF p, LauncherForm ui) { ui.ShowPage(Index); }
+    public override void Down(PointF p, LauncherForm ui) { if (ui.TabPage(ui.PageNow) != Index) ui.ShowPage(Index); }
     public override void Paint(Graphics g, LauncherForm ui) {
-        bool on = ui.PageNow == Index;
+        bool on = ui.TabPage(ui.PageNow) == Index;
         Color c = on ? Color.White : Theme.Mix(Theme.Dim, Theme.Text, Hover);
         Theme.Text_(g, Text, Theme.Tab, c, R, StringAlignment.Center, StringAlignment.Center);
+    }
+}
+
+// (Mako 4.1) a page of More: a pill in the row under the tabs
+class SubTab : Widget {
+    public string Text; public int Target;
+    public override void Down(PointF p, LauncherForm ui) { ui.ShowPage(Target); }
+    public override void Paint(Graphics g, LauncherForm ui) {
+        bool on = ui.PageNow == Target;
+        using (var path = Theme.Round(R, R.Height / 2)) {
+            using (var b = new SolidBrush(on ? Theme.A(Theme.Blue, 70) : Theme.Mix(Theme.Card, Theme.CardHi, Hover))) g.FillPath(b, path);
+            using (var pen = new Pen(on ? Theme.A(Theme.Cyan, 170) : Theme.Mix(Theme.Line, Theme.Blue, Hover), 1f)) g.DrawPath(pen, path);
+        }
+        Theme.Text_(g, Text, Theme.Label, on ? Color.White : Theme.Mix(Theme.Dim, Theme.Text, Hover), R, StringAlignment.Center, StringAlignment.Center);
+    }
+}
+
+// (Mako 4.1) the video memory the game's textures may take (RX_VK_VRAM_MB in hookshot_env.txt): Auto (the game's own
+// choice) or a cap in steps of 512 MB, the recommended one for this card marked on the track
+class VramSlider : Widget {
+    public int MinMB = 1024, MaxMB = 8192, StepMB = 512, ValueMB, RecMB, CardMB;   // (ValueMB 0: Auto)
+    public Action<VramSlider> Changed;
+    bool dragging;
+    public override string Help {
+        get {
+            return "The most video memory the game's textures may take. Lower it if the game stutters, freezes or the driver crashes after a while of play; " +
+                   "higher keeps more textures loaded. Auto lets the game choose." + (RecMB > 0 ? " Recommended for this card: " + Gb(RecMB) + "." : "");
+        }
+    }
+    public RectangleF Track { get { return new RectangleF(R.X + 250, R.Y + 30, R.Width - 250 - 120, 4); } }
+    public RectangleF AutoChip { get { return new RectangleF(R.Right - 104, R.Y + 16, 88, 30); } }
+    public RectangleF RecChip { get { return new RectangleF(R.X + 16, R.Y + 34, 0, 0); } }
+    public static string Gb(int mb) { return (mb / 1024.0).ToString(mb % 1024 == 0 ? "0" : "0.0", System.Globalization.CultureInfo.InvariantCulture) + " GB"; }
+    float XOf(int mb) { var t = Track; return t.X + t.Width * (mb - MinMB) / (float)Math.Max(1, MaxMB - MinMB); }
+    int MbAt(float x) {
+        var t = Track;
+        float f = Math.Max(0, Math.Min(1, (x - t.X) / Math.Max(1, t.Width)));
+        int mb = MinMB + (int)Math.Round(f * (MaxMB - MinMB) / StepMB) * StepMB;
+        return Math.Max(MinMB, Math.Min(MaxMB, mb));
+    }
+    public override void Press(PointF p, LauncherForm ui) {
+        if (AutoChip.Contains(p)) return;
+        var t = Track;
+        if (p.X >= t.X - 12 && p.X <= t.Right + 12) { dragging = true; ValueMB = MbAt(p.X); }
+    }
+    public override void DragTo(PointF p, LauncherForm ui) { if (dragging) ValueMB = MbAt(p.X); }
+    public override void Release(LauncherForm ui) { if (dragging) { dragging = false; if (Changed != null) Changed(this); } }
+    public override void Down(PointF p, LauncherForm ui) {
+        if (AutoChip.Contains(p)) { ValueMB = 0; if (Changed != null) Changed(this); }
+    }
+    public override void Paint(Graphics g, LauncherForm ui) {
+        float h = Hover;
+        using (var path = Theme.Round(R, 12)) {
+            using (var br = new SolidBrush(Theme.Mix(Theme.Card, Theme.CardHi, h))) g.FillPath(br, path);
+            using (var pen = new Pen(Theme.Mix(Theme.Line, Theme.A(Theme.Blue, 200), h), 1f)) g.DrawPath(pen, path);
+        }
+        using (var b = new SolidBrush(Theme.A(Theme.Cyan, (int)(40 + 180 * h))))
+            using (var p = Theme.Round(new RectangleF(R.X + 1, R.Y + 14, 3, R.Height - 28), 1.5f)) g.FillPath(b, p);
+        Theme.Text_(g, "VIDEO MEMORY FOR TEXTURES", Theme.Label, Theme.Dim, new RectangleF(R.X + 16, R.Y + 9, 230, 18), StringAlignment.Near, StringAlignment.Near);
+        Theme.Text_(g, ValueMB > 0 ? "At most " + Gb(ValueMB) : "Auto", Theme.Value, Theme.Text, new RectangleF(R.X + 16, R.Y + 27, 230, 24), StringAlignment.Near, StringAlignment.Near);
+        var t = Track;
+        using (var p = Theme.Round(t, 2)) using (var b = new SolidBrush(Color.FromArgb(34, 44, 66))) g.FillPath(b, p);
+        if (RecMB > 0) {   // (the recommended size: a tick and its label under the track)
+            float rx = XOf(RecMB);
+            using (var b = new SolidBrush(Theme.Green)) g.FillRectangle(b, rx - 1, t.Y - 7, 2, 18);
+            Theme.Text_(g, "recommended " + Gb(RecMB), Theme.Small, Theme.Green, new RectangleF(rx - 80, t.Y + 12, 160, 18), StringAlignment.Center, StringAlignment.Near);
+        }
+        Theme.Text_(g, Gb(MinMB), Theme.Small, Theme.Faint, new RectangleF(t.X - 30, t.Y - 26, 60, 16), StringAlignment.Center, StringAlignment.Near);
+        Theme.Text_(g, Gb(MaxMB), Theme.Small, Theme.Faint, new RectangleF(t.Right - 30, t.Y - 26, 60, 16), StringAlignment.Center, StringAlignment.Near);
+        if (ValueMB > 0) {
+            float vx = XOf(ValueMB);
+            using (var p = Theme.Round(new RectangleF(t.X, t.Y, vx - t.X, t.Height), 2))
+                using (var b = new LinearGradientBrush(new RectangleF(t.X, t.Y, Math.Max(1, vx - t.X), 4), Theme.Blue, Theme.Cyan, 0f)) g.FillPath(b, p);
+            using (var b = new SolidBrush(Theme.A(Color.Black, 70))) g.FillEllipse(b, vx - 9, t.Y - 7, 18, 18);
+            using (var b = new SolidBrush(Color.White)) g.FillEllipse(b, vx - 9, t.Y - 8, 18, 18);
+        }
+        bool auto = ValueMB == 0, over = ui.MouseIn(AutoChip);
+        using (var p = Theme.Round(AutoChip, 15)) {
+            using (var b = new SolidBrush(auto ? Theme.A(Theme.Blue, 70) : over ? Theme.CardHi : Theme.Card)) g.FillPath(b, p);
+            using (var pen = new Pen(auto ? Theme.A(Theme.Cyan, 170) : Theme.Line, 1f)) g.DrawPath(pen, p);
+        }
+        Theme.Text_(g, "Auto", Theme.Label, auto ? Color.White : Theme.Dim, AutoChip, StringAlignment.Center, StringAlignment.Center);
     }
 }
 
@@ -592,7 +696,7 @@ class LauncherForm : Form {
         new object[] { "sharpness", "Sharpness", new[] { "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, new[] { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 },
             "Sharpens the picture on its way to the screen. Too much shows halos around edges." },
         new object[] { "frame_generation", "Frame generation", new[] { "Off", "2x", "3x", "4x", "5x", "6x", "7x", "8x", "AMD Redstone 2x" }, new[] { 0, 2, 3, 4, 5, 6, 7, 8, 2 },
-            "Shows extra in-between frames for smoother motion. AMD Redstone 2x: AMD's AI frame generation instead of Mako's, for RX 9000 cards with AMD's files (FSR tab) and FSR 4. Best with 12 GB+." },
+            "Shows extra in-between frames for smoother motion. AMD Redstone 2x: AMD's AI frame generation instead of Mako's, for RX 9000 cards with AMD's files (More > AMD FSR) and FSR 4. Best with 12 GB+." },
         new object[] { "frame_rate_cap", "Frame rate cap", new[] { "60 (the console's)", "90", "120", "144", "165", "240" }, new[] { 0, 1, 2, 3, 4, 5 },
             "The most frames per second the game runs at. Above 60 needs a screen that shows them." },
         new object[] { "amd_anti-lag_2", "AMD Anti-Lag 2", new[] { "Off", "On" }, new[] { 0, 1 },
@@ -621,15 +725,36 @@ class LauncherForm : Form {
     // (Mako) the Master Quest page (host/master_quest.c): started by its own Play button (HOS_MASTER_QUEST=1), its saves apart
     // (user\save_mq), its title logo made at build time from the player's files (prompts/mq, nx2/mq_logo.py)
     static readonly object[][] MqRows = {
-        new object[] { "master_quest_damage", "Damage Link takes", new[] { "x2 (3DS)", "x3", "x4" }, new[] { 2, 3, 4 },
+        new object[] { "master_quest_damage", "Master Quest damage", new[] { "x2 (as on 3DS)", "x3 (hard)", "x4 (very hard)" }, new[] { 2, 3, 4 },
             "How much harder enemies, falls and hazards hit in Master Quest. The 3DS Master Quest uses x2." },
     };
+    VramSlider vramSlider;
+    /// (Mako 4.1) the texture cap advised for a card: what is left once the game's other video memory (render targets, buffers,
+    /// pipelines: ~3.5-4 GB in Hyrule Field) is set aside from 90% of the card, in 512 MB steps; at most 6 GB up to 16 GB cards
+    /// (more filled them past what they hold), 8 GB above; at least 1 GB; 2.5 GB on a GPU sharing the PC's RAM
+    public static int RecommendedVramMB(long cardMB, bool integrated) {
+        if (integrated) return 2560;
+        if (cardMB <= 0) return 0;
+        long r = cardMB * 9 / 10 - 4096;
+        r = r / 512 * 512;
+        long cap = cardMB > 17408 ? 8192 : 6144;
+        return (int)Math.Max(1024, Math.Min(cap, r));
+    }
     static readonly string[] PresetKeys = { "resolution", "upscaling", "sharpness", "frame_pacing", "game_speed", "handheld_profile" };   // (as the game's presets: frame generation is the player's)
     static readonly string[][] Languages = {
         new[] { "en-US", "English (US)" }, new[] { "en-GB", "English (UK)" }, new[] { "fr", "Français (France)" }, new[] { "fr-CA", "Français (Canada)" },
         new[] { "de", "Deutsch" }, new[] { "it", "Italiano" }, new[] { "es", "Español (España)" }, new[] { "es-419", "Español (Latinoamérica)" },
         new[] { "pt-BR", "Português (Brasil)" }, new[] { "nl", "Nederlands" }, new[] { "pl", "Polski" }, new[] { "ru", "Русский" },
         new[] { "ja", "日本語" }, new[] { "ko", "한국어" }, new[] { "zh-Hans", "简体中文" }, new[] { "zh-Hant", "繁體中文" },
+    };
+    // (Mako 4.1) More > Files & help: button, what it does
+    static readonly string[][] FileRows = {
+        new[] { "Saves", "Your saves (user\\save). Copy this folder to keep them safe." },
+        new[] { "Import saves", "Bring in saves from another copy of the game or an emulator." },
+        new[] { "Master Quest saves", "Master Quest keeps its own saves, apart (user\\save_mq)." },
+        new[] { "Game folder", "Where Mako, its settings and its logs are." },
+        new[] { "Send logs", "Something went wrong? Send the game's last logs and a few words to the Mako team." },
+        new[] { "Report on GitHub", "Open the project's issue page, to report a bug with screenshots." },
     };
     // (env name, value when on, label, help, value when off; "" = no line, the game's default)
     static readonly string[][] Fixes = {
@@ -691,18 +816,38 @@ class LauncherForm : Form {
                               Click = () => OpenUrl(Fork.Home) });
 
         // (tabs)
-        string[] names = { "Recommended", "Graphics", "Game", "Fixes", "FSR", "About", "Master Quest", "Mods" };
+        // (Mako 4.1: five tabs, the rarely used pages under More with their own row: fewer buttons on every page)
+        string[] names = { "Home", "Graphics", "Game", "Mods", "More" };
+        int[] firstPage = { 0, 1, 2, 7, 3 };
         float tx = LeftW + 36;
         using (var g = CreateGraphics())
             for (int i = 0; i < names.Length; i++) {
-                float w = g.MeasureString(names[i], Theme.Tab).Width + 16;
-                var t = new TabW { Text = names[i], Index = i, R = new RectangleF(tx, 50, w, 40) };
+                float w = g.MeasureString(names[i], Theme.Tab).Width + 28;
+                var t = new TabW { Text = names[i], Index = firstPage[i], R = new RectangleF(tx, 50, w, 40) };
                 tabs.Add(t); widgets.Add(t);
-                tx += w + 3;
+                tx += w + 6;
+            }
+        string[] subNames = { "Fixes", "AMD FSR", "Files & help", "About" };
+        int[] subPages = { 3, 4, 8, 5 };
+        float sx = LeftW + 36;
+        using (var g = CreateGraphics())
+            for (int i = 0; i < subNames.Length; i++) {
+                float w = g.MeasureString(subNames[i], Theme.Label).Width + 30;
+                foreach (int pg in subPages) widgets.Add(new SubTab { Text = subNames[i], Target = subPages[i], Page = pg, R = new RectangleF(sx, 104, w, 32) });
+                sx += w + 8;
             }
 
         float cx = LeftW + 36, cw = W - LeftW - 72, colW = (cw - 14) / 2;
         AddSelectors(GraphicsRows, 1, cx, colW);
+        {
+            var pcNow = PcInfo.Read();
+            int card = (int)pcNow.VramMB;
+            vramSlider = new VramSlider { Page = 1, R = new RectangleF(cx, 112 + (GraphicsRows.Length + 1) / 2 * 70, cw, 62), CardMB = card,
+                                          RecMB = RecommendedVramMB(card, pcNow.Integrated),
+                                          MaxMB = Math.Max(4096, card > 0 ? Math.Min(16384, (card - 2048) / 512 * 512) : 8192) };
+            vramSlider.Changed = v => { if (!loading) SaveEnv(); };
+            widgets.Add(vramSlider);
+        }
         AddSelectors(GameRows, 2, cx, colW);
         var langItems = new string[Languages.Length]; var langValues = new int[Languages.Length];
         for (int i = 0; i < Languages.Length; i++) { langItems[i] = Languages[i][1]; langValues[i] = i; }
@@ -712,31 +857,20 @@ class LauncherForm : Form {
         langSel.Changed = s => { if (!loading) SaveLanguage(); };
         widgets.Add(langSel);
         for (int i = 0; i < Fixes.Length; i++) {
-            var tg = new Toggle { Key = Fixes[i][0], Label = Fixes[i][2], HelpText = Fixes[i][3], Page = 3, R = new RectangleF(cx, 112 + i * 92, cw, 88) };
+            var tg = new Toggle { Key = Fixes[i][0], Label = Fixes[i][2], HelpText = Fixes[i][3], Page = 3, R = new RectangleF(cx, 150 + i * 96, cw, 90) };
             tg.Changed = t => { if (!loading) SaveEnv(); };
             fixes[tg.Key] = tg; widgets.Add(tg);
         }
         // (Mako) the FSR tab: AMD's files, fetched from AMD's own GitHub with one button (Fsr below)
-        fsrButton = new Btn { Text = "Download AMD FSR", Style = Btn.Kind.Primary, R = new RectangleF(cx, 470, 260, 44), Page = 4, Click = OnFsrDownload };
+        fsrButton = new Btn { Text = "Download AMD FSR", Style = Btn.Kind.Primary, R = new RectangleF(cx, 504, 260, 44), Page = 4, Click = OnFsrDownload };
         widgets.Add(fsrButton);
-        widgets.Add(new Btn { Text = "AMD FSR SDK on GitHub", R = new RectangleF(cx + 272, 470, 220, 44), Page = 4, Click = () => OpenUrl(Fsr.Page) });
-        widgets.Add(new Btn { Text = "Project page on GitHub", R = new RectangleF(cx, 470, 220, 40), Page = 5, Click = () => OpenUrl(Fork.Home) });
-        widgets.Add(new Btn { Text = "Licence (GPL-3)", R = new RectangleF(cx + 232, 470, 170, 40), Page = 5, Click = () => OpenUrl(Fork.Home + "/blob/HEAD/LICENSE") });
+        widgets.Add(new Btn { Text = "AMD FSR SDK on GitHub", R = new RectangleF(cx + 272, 504, 220, 44), Page = 4, Click = () => OpenUrl(Fsr.Page) });
+        widgets.Add(new Btn { Text = "Project page on GitHub", R = new RectangleF(cx, 504, 220, 40), Page = 5, Click = () => OpenUrl(Fork.Home) });
+        widgets.Add(new Btn { Text = "Licence (GPL-3)", R = new RectangleF(cx + 232, 504, 170, 40), Page = 5, Click = () => OpenUrl(Fork.Home + "/blob/HEAD/LICENSE") });
 
         // (Mako) the Master Quest page: its logo (PaintMasterQuest), its Play button, the damage, its saves
-        widgets.Add(new Btn { Text = "PLAY MASTER QUEST", Style = Btn.Kind.Play, Gold = true, R = new RectangleF(cx + (cw - 420) / 2, 452, 420, 70),
-                              Page = 6, Click = () => OnPlay(true) });
-        AddSelectors(MqRows, 99, cx, colW);   // (the damage kept and saved as a setting; shown as the three cards below)
-        string[][] trials = { new[] { "x2", "As on 3DS" }, new[] { "x3", "Hard" }, new[] { "x4", "Very hard" } };
-        float cardW = (cw - 24) / 3;
-        for (int i = 0; i < trials.Length; i++) {
-            int at = i;
-            widgets.Add(new GoldChoice { Title = trials[i][0], Sub = trials[i][1], Page = 6, R = new RectangleF(cx + i * (cardW + 12), 544, cardW, 58),
-                                         IsOn = () => settings["master_quest_damage"].Index == at,
-                                         Click = () => settings["master_quest_damage"].Set(at, true) });
-        }
-        widgets.Add(new Btn { Text = "Open the Master Quest saves", Style = Btn.Kind.Link, R = new RectangleF(cx + cw - 230, 622, 230, 26), Page = 6,
-                              Click = () => { Directory.CreateDirectory(Path.Combine(dir, "user", "save_mq")); OpenFolder(Path.Combine(dir, "user", "save_mq")); } });
+        // (Mako 4.1) Master Quest: no page of its own (its Play is on the left); its damage is a Game setting
+        AddSelectors(MqRows, 2, cx, colW, GameRows.Length + 1);
 
         // (Mako 4.1) the Mods tab (Mods.cs): the drop zone, the list; a mod dropped anywhere on the window is installed
         widgets.Add(new ModDrop { R = new RectangleF(cx, 108, cw, 76), Page = 7, Click = ModsPick });
@@ -756,10 +890,15 @@ class LauncherForm : Form {
         RefreshMods();
 
         // (bottom row: folders)
-        widgets.Add(new Btn { Text = "Saves", HideOn2 = 0, R = new RectangleF(cx, 612, 110, 42), HideOn = 6, Click = () => OpenFolder(Path.Combine(dir, "user", "save")) });
-        widgets.Add(new Btn { Text = "Import saves", HideOn2 = 0, R = new RectangleF(cx + 118, 612, 140, 42), HideOn = 6, Click = OnImport });
-        widgets.Add(new Btn { Text = "Send logs", HideOn2 = 0, R = new RectangleF(cx + 266, 612, 120, 42), HideOn = 6, Click = OnSendLogs });
-        widgets.Add(new Btn { Text = "Game folder", HideOn2 = 0, R = new RectangleF(cx + 394, 612, 140, 42), HideOn = 6, Click = () => OpenFolder(dir) });
+        // (Mako 4.1: the folders and Send logs on More > Files & help, not under every page)
+        {
+            float fw = (cw - 14) / 2;
+            Action[] acts = { () => OpenFolder(Path.Combine(dir, "user", "save")), OnImport,
+                              () => { Directory.CreateDirectory(Path.Combine(dir, "user", "save_mq")); OpenFolder(Path.Combine(dir, "user", "save_mq")); },
+                              () => OpenFolder(dir), OnSendLogs, () => OpenUrl(Fork.Home + "/issues") };
+            for (int i = 0; i < FileRows.Length; i++)
+                widgets.Add(new Btn { Text = FileRows[i][0], Page = 8, Click = acts[i], R = new RectangleF(cx + i % 2 * (fw + 14), 150 + i / 2 * 112, fw, 44) });
+        }
 
         // (Mako) the Recommended tab: this PC read once, and its Apply button
         BuildRecommendations();
@@ -770,8 +909,8 @@ class LauncherForm : Form {
         LoadAll();
         int first;
         string[] cmd = Environment.GetCommandLineArgs();
-        ShowPage(cmd.Length > 2 && int.TryParse(cmd[2], out first) && first >= 0 && first < tabs.Count ? first : 0);
-        tabX = tabs[PageNow].R.X; tabW = tabs[PageNow].R.Width;
+        ShowPage(cmd.Length > 2 && int.TryParse(cmd[2], out first) && first >= 0 && first <= 8 ? first : 0);
+        { var t0 = tabs.Find(x => x.Index == TabPage(PageNow)).R; tabX = t0.X; tabW = t0.Width; }
         float scroll0;   // (a third argument: the Recommended tab scrolled, for screenshots)
         if (cmd.Length > 3 && float.TryParse(cmd[3], out scroll0)) recScroll = scroll0;
 
@@ -792,10 +931,10 @@ class LauncherForm : Form {
         try { int round = 2; DwmSetWindowAttribute(Handle, 33, ref round, 4); } catch { }   // (Windows 11: rounded corners)
     }
 
-    void AddSelectors(object[][] rows, int page, float x0, float colW) {
+    void AddSelectors(object[][] rows, int page, float x0, float colW, int first = 0) {
         for (int i = 0; i < rows.Length; i++) {
             var row = rows[i];
-            int col = i % 2, line = i / 2;
+            int col = (i + first) % 2, line = (i + first) / 2;
             var s = new Selector { Key = (string)row[0], Label = (string)row[1], Items = (string[])row[2], Values = (int[])row[3], HelpText = (string)row[4],
                                    Page = page, R = new RectangleF(x0 + col * (colW + 14), 112 + line * 70, colW, 62) };
             s.Changed = OnSetting;
@@ -810,7 +949,10 @@ class LauncherForm : Form {
 
     public bool MouseIn(RectangleF r) { return r.Contains(mouse); }
 
+    // (Mako 4.1) the tab a page belongs to: More's pages light More (3)
+    public int TabPage(int page) { return page == 4 || page == 5 || page == 8 ? 3 : page == 6 ? 0 : page; }
     public void ShowPage(int k) {
+        if (k == 6) k = 0;   // (the old Master Quest page)
         if (k == PageNow && pageFade >= 1 && tabW > 0) return;
         if (k == 7 && k != PageNow && !ModBusy) RefreshMods();
         PageNow = k; pageFade = 0;
@@ -826,7 +968,7 @@ class LauncherForm : Form {
             w.Hover += (target - w.Hover) * 0.22f;
             w.Tick();
         }
-        var t = tabs[PageNow].R;
+        var t = tabs.Find(x => x.Index == TabPage(PageNow)).R;
         tabX += (t.X - tabX) * 0.2f; tabW += (t.Width - tabW) * 0.2f;
         pageFade = Math.Min(1, pageFade + dt * 5);
         for (int i = 0; i < bubbles.Length; i++) {
@@ -985,16 +1127,17 @@ class LauncherForm : Form {
         float x = LeftW + 36;
         if (PageNow == 0) PaintRecommended(g, x);
         if (PageNow == 2)
-            Theme.Text_(g, "Controls are set in game: press Insert for the menu.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + (GameRows.Length + 2) / 2 * 70 + 6, 500, 20),
+            Theme.Text_(g, "Controls are set in game: press Insert for the menu.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + (GameRows.Length + 3) / 2 * 70 + 6, 500, 20),
                         StringAlignment.Near, StringAlignment.Near);
         if (PageNow == 3)
-            Theme.Text_(g, "Read by the game when it starts.", Theme.Small, Theme.Faint, new RectangleF(x, 112 + Fixes.Length * 92, 500, 20),
+            Theme.Text_(g, "Read by the game when it starts.", Theme.Small, Theme.Faint, new RectangleF(x, 150 + Fixes.Length * 96, 500, 20),
                         StringAlignment.Near, StringAlignment.Near);
         if (PageNow == 4) PaintFsr(g, x);
         if (PageNow == 6) PaintMasterQuest(g, x);
         if (PageNow == 7) PaintMods(g, x);
+        if (PageNow == 8) PaintFiles(g, x);
         if (PageNow == 5) {
-            var r = new RectangleF(x, 112, W - LeftW - 72, 340);
+            var r = new RectangleF(x, 150, W - LeftW - 72, 340);
             using (var p = Theme.Round(r, 14)) {
                 using (var b = new SolidBrush(Theme.Card)) g.FillPath(b, p);
                 using (var pen = new Pen(Theme.Line)) g.DrawPath(pen, p);
@@ -1009,6 +1152,13 @@ class LauncherForm : Form {
                 "Thanks to the Hookshot authors and everyone who tests and reports.",
                 Theme.Body, Theme.Text, new RectangleF(r.X + 24, r.Y + 96, r.Width - 48, r.Height - 110), StringAlignment.Near, StringAlignment.Near);
         }
+    }
+
+    void PaintFiles(Graphics g, float x) {
+        float cw = W - LeftW - 72, fw = (cw - 14) / 2;
+        for (int i = 0; i < FileRows.Length; i++)
+            Theme.Text_(g, FileRows[i][1], Theme.Small, Theme.Dim, new RectangleF(x + i % 2 * (fw + 14) + 4, 150 + i / 2 * 112 + 50, fw - 8, 54),
+                        StringAlignment.Near, StringAlignment.Near);
     }
 
     // (Mako) the Master Quest page's backdrop: dark, a little warm light behind the logo. Still, drawn once
@@ -1146,6 +1296,7 @@ class LauncherForm : Form {
     // ---- mouse ----
     protected override void OnMouseMove(MouseEventArgs e) {
         mouse = e.Location;
+        if (pressed != null && (e.Button & MouseButtons.Left) != 0) pressed.DragTo(e.Location, this);
         Widget w = At(mouse);
         Cursor = w != null ? Cursors.Hand : Cursors.Default;
         base.OnMouseMove(e);
@@ -1162,12 +1313,14 @@ class LauncherForm : Form {
         base.OnMouseDown(e);
         if (e.Button != MouseButtons.Left) return;
         pressed = At(e.Location);
+        if (pressed != null) pressed.Press(e.Location, this);
         if (pressed == null && e.Y < 40) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); }   // (drag the window by its top)
     }
     protected override void OnMouseUp(MouseEventArgs e) {
         base.OnMouseUp(e);
         var w = At(e.Location);
         if (w != null && w == pressed && e.Button == MouseButtons.Left) w.Down(e.Location, this);
+        if (pressed != null && e.Button == MouseButtons.Left) pressed.Release(this);
         pressed = null;
     }
 
@@ -1222,6 +1375,11 @@ class LauncherForm : Form {
             fixes[f[0]].On = env.TryGetValue(f[0], out v) ? v == f[1] : f[1].Length == 0;
             fixes[f[0]].Snap();
         }
+        string vm; int vmb;
+        if (vramSlider != null)
+            vramSlider.ValueMB = env.TryGetValue("RX_VK_VRAM_MB", out vm) && int.TryParse(vm, out vmb) && vmb > 0
+                                     ? Math.Max(vramSlider.MinMB, Math.Min(Math.Max(vramSlider.MaxMB, vmb), vmb)) : 0;
+        if (vramSlider != null && vramSlider.ValueMB > vramSlider.MaxMB) vramSlider.MaxMB = vramSlider.ValueMB;
         string rs;
         if (env.TryGetValue("RX_VK_REDSTONE", out rs) && rs == "1" && settings["frame_generation"].Value == 2)
             settings["frame_generation"].Index = settings["frame_generation"].Items.Length - 1;
@@ -1298,6 +1456,10 @@ class LauncherForm : Form {
             }
             lines.RemoveAll(l => { var t = l.Trim(); return !t.StartsWith("#") && t.StartsWith("RX_VK_REDSTONE="); });
             if (IsRedstone()) lines.Add("RX_VK_REDSTONE=1");
+            if (vramSlider != null) {   // (Mako 4.1: the texture cap; Auto leaves no line)
+                lines.RemoveAll(l => { var t = l.Trim(); return !t.StartsWith("#") && t.StartsWith("RX_VK_VRAM_MB="); });
+                if (vramSlider.ValueMB > 0) lines.Add("RX_VK_VRAM_MB=" + vramSlider.ValueMB);
+            }
             if (lines.Count == 0 && File.Exists(envPath)) File.Delete(envPath);
             else if (lines.Count > 0) File.WriteAllLines(envPath, lines.ToArray(), new UTF8Encoding(false));
         } catch (Exception ex) {
@@ -1632,8 +1794,8 @@ class LauncherForm : Form {
 
         // (Upscaler)
         int up; string upWhy;
-        if (pc.Tier == 2) { up = 4; upWhy = "Radeon RX 9000: AMD FSR 4 is the sharpest. It needs AMD's files: one click in the FSR tab. Native AA is sharper still but much heavier: only with 16 GB and power to spare."; }
-        else if (pc.Tier == 1) { up = 3; upWhy = "Radeon RX 6000 / 7000: AMD FSR 3.1 is light and clean. FSR 4 also works on this card (FSR tab), sharper but heavier: try it if you have fps to spare."; }
+        if (pc.Tier == 2) { up = 4; upWhy = "Radeon RX 9000: AMD FSR 4 is the sharpest. It needs AMD's files: one click in More > AMD FSR. Native AA is sharper still but much heavier: only with 16 GB and power to spare."; }
+        else if (pc.Tier == 1) { up = 3; upWhy = "Radeon RX 6000 / 7000: AMD FSR 3.1 is light and clean. FSR 4 also works on this card (More > AMD FSR), sharper but heavier: try it if you have fps to spare."; }
         else if (low) { up = 0; upWhy = "The game's own upscaler is the lightest: best for a graphics chip in the processor."; }
         else { up = 3; upWhy = "AMD FSR 3.1 works on every graphics card and is sharper than the game's own when the 3D is drawn smaller."; }
         Opt("Upscaler", "dlss", up, upWhy);
@@ -1663,6 +1825,14 @@ class LauncherForm : Form {
         Opt("Screen shape", "ultrawide", wide ? 1 : 0, wide ? "Your screen is wider than 16:9: the camera widens to fill it." : "Your screen is 16:9 (or close): the game's own shape.");
         Opt("Handheld profile", "handheld_profile", low ? 1 : 0, low ? "The console's undocked mode: lighter on a built-in graphics chip." : "Off: the docked console's sharper picture.");
         Opt("Game speed", "game_speed", 1, "Real time keeps the game at its normal speed even when the frame rate drops.");
+        {   // (Mako 4.1) the texture cap (Graphics tab, its slider): Apply sets it
+            int recMb = RecommendedVramMB(pc.VramMB, pc.Integrated);
+            if (recMb > 0)
+                recGraphics.Add(new RecRow("Video memory for textures", "At most " + VramSlider.Gb(recMb),
+                                           (pc.Integrated ? "Your graphics share the PC's memory: a small cap keeps the game from running out of it."
+                                                          : "Leaves room on your " + v + " GB card for the rest of the game.") +
+                                           " If the game stutters or freezes after a while, lower it (Graphics tab).") { Key = "__vram", Set = recMb });
+        }
 
         // (the Fixes tab and the FSR tab: advice, the Apply button leaves them)
         recFixes.Add(new RecRow("No blue light flashes", "On", "Stops the one-frame blue light flashes in Hyrule Field. Costs a few fps, worth it."));
@@ -1672,10 +1842,10 @@ class LauncherForm : Form {
                                 ", then plays smoothly. On reaches the title sooner, but the preparation then runs during play for hours, with stutters and objects appearing late."));
         bool redstone = pc.Tier == 2 && (!knownVram || v > 12);
         recFixes.Add(new RecRow("Redstone frame gen.", redstone ? "On, with FSR 4 and 2x" : "Off",
-                                pc.Tier == 2 ? (redstone ? "Your RX 9000 has the memory for it: AMD's frame generation, made by AI, gives cleaner motion and a steady HUD. Needs AMD's files (FSR tab), the Upscaler on AMD FSR 4 and Frame generation on 2x."
+                                pc.Tier == 2 ? (redstone ? "Your RX 9000 has the memory for it: AMD's frame generation, made by AI, gives cleaner motion and a steady HUD. Needs AMD's files (More > AMD FSR), the Upscaler on AMD FSR 4 and Frame generation on 2x."
                                                          : "Your RX 9000 has " + v + " GB: Redstone takes video memory the game needs. Keep it off, or try it with the Quality preset one step lower.")
                                              : "Made for Radeon RX 9000 cards only.") { Good = redstone });
-        recFixes.Add(new RecRow("AMD FSR files (FSR tab)", pc.Tier >= 1 ? "Download" : "Not needed",
+        recFixes.Add(new RecRow("AMD FSR files", pc.Tier >= 1 ? "Download" : "Not needed",
                                 pc.Tier >= 1 ? "One click, about 110 MB from AMD's own GitHub, checked as signed by AMD. Needed for FSR 4 and Redstone." : "FSR 4 needs a Radeon RX 6000 or newer; FSR 3.1 works without these files."));
 
         // (good to know: from this PC)
@@ -1920,7 +2090,7 @@ class LauncherForm : Form {
         y += cardH + 18;
         // (the sections)
         y = RecSection(g, w, y, draw, "GRAPHICS  ·  the Apply button sets these", recGraphics);
-        y = RecSection(g, w, y, draw, "FIXES AND FSR TABS  ·  set them yourself", recFixes);
+        y = RecSection(g, w, y, draw, "MORE > FIXES AND AMD FSR  ·  set them yourself", recFixes);
         if (draw) Theme.Text_(g, "GOOD TO KNOW", Theme.Label, Theme.Cyan, new RectangleF(0, y, w, 18), StringAlignment.Near, StringAlignment.Near);
         y += 24;
         foreach (var n in recNotes) {
@@ -1993,23 +2163,27 @@ class LauncherForm : Form {
     void OnApplyRecommended() {
         bool envToo = recFixes.Exists(r => r.Env != null);
         if (MessageBox.Show(this, "This sets the Graphics tab to the values shown here. Your current graphics settings are replaced.\n" +
-                            (envToo ? "(The test also sets the switches it named in the Fixes tab; the FSR tab is left as it is.)" : "(The Fixes and FSR tabs are left as they are.)") +
+                            (envToo ? "(The test also sets the switches it named in More > Fixes; AMD FSR is left as it is.)" : "(More > Fixes and AMD FSR are left as they are.)") +
                             "\n\nApply?", Fork.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         loading = true;
-        foreach (var r in recGraphics) if (r.Key != null) SetSetting(r.Key, r.Set);
+        bool vramToo = false;
+        foreach (var r in recGraphics) {
+            if (r.Key == "__vram") { if (vramSlider != null) { vramSlider.ValueMB = r.Set; vramToo = true; } }
+            else if (r.Key != null) SetSetting(r.Key, r.Set);
+        }
         foreach (var r in recFixes) {
             Toggle t;
             if (r.Env != null && fixes.TryGetValue(r.Env, out t)) { t.On = r.EnvOn; t.Snap(); }
         }
         loading = false;
         SaveOptions();
-        if (envToo) SaveEnv();
+        if (envToo || vramToo) SaveEnv();
         MessageBox.Show(this, "Done: the recommended settings are saved. You can still change any of them in the Graphics tab.", Fork.Name,
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     void PaintFsr(Graphics g, float x) {
-        var r = new RectangleF(x, 112, W - LeftW - 72, 340);
+        var r = new RectangleF(x, 150, W - LeftW - 72, 340);
         using (var p = Theme.Round(r, 14)) {
             using (var b = new SolidBrush(Theme.Card)) g.FillPath(b, p);
             using (var pen = new Pen(Theme.Line)) g.DrawPath(pen, p);
@@ -2017,7 +2191,7 @@ class LauncherForm : Form {
         Theme.Text_(g, "AMD FSR", Theme.Pick(22f, FontStyle.Bold, "Bahnschrift", "Segoe UI"), Color.White, new RectangleF(r.X + 24, r.Y + 16, 400, 30), StringAlignment.Near, StringAlignment.Near);
         string gpu = Fsr.Gpu();
         int tier = Fsr.Tier(gpu);
-        string what = tier == 2 ? "FSR 4 upscaling and FSR Redstone frame generation (switch in the Fixes tab) are made for this card."
+        string what = tier == 2 ? "FSR 4 upscaling and FSR Redstone frame generation are made for this card."
                     : tier == 1 ? "FSR 4 upscaling works on this card. FSR frame generation needs a Radeon RX 9000."
                     : "FSR 4 needs an AMD Radeon RX 6000 or newer. FSR 3.1 works on every card without these files.";
         Theme.Text_(g, "Graphics card: " + (gpu.Length > 0 ? gpu : "unknown"), Theme.Body, Theme.Cyan, new RectangleF(r.X + 24, r.Y + 52, r.Width - 48, 22), StringAlignment.Near, StringAlignment.Near);

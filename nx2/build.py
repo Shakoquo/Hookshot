@@ -928,7 +928,23 @@ def main():
                 stamp.update(os.path.relpath(f, vk).replace("\\", "/").encode() + src.read().replace(bytes((13, 10)), bytes((10,))))
         # (HOOKSHOT_SHADER_STAMP=<16 hex>: that stamp instead, for a change to these files that does not change what translation makes
         # (when a program is parsed, not how): the players' program caches are kept)
-        shader_stamp = "-DHOOKSHOT_SHADER_STAMP=0x%sull" % (os.environ.get("HOOKSHOT_SHADER_STAMP") or stamp.hexdigest()[:16])
+        # (Mako 4.1) nx2/shader_stamp_pin.txt, "<pinned stamp> <the files' own stamp it stands for>": while these files still hash to the
+        # second, the first is used. A release whose changes to them leave translation as it was ships one, and the players' program
+        # caches (7 GB, hours to make again) are kept; any later change to these files no longer matches, and the stamp is the files' own
+        computed = stamp.hexdigest()[:16]
+        chosen = os.environ.get("HOOKSHOT_SHADER_STAMP") or ""
+        if not chosen:
+            try:
+                with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "shader_stamp_pin.txt"), encoding="utf-8") as pin_file:
+                    pin = pin_file.read().split()
+                if len(pin) >= 2 and pin[1] == computed:
+                    chosen = pin[0]
+                    print("shader stamp %s pinned (the files' own %s): the program caches are kept" % (chosen, computed))
+                elif pin:
+                    print("shader stamp %s: the pin is for other files (%s), not used" % (computed, pin[1] if len(pin) > 1 else "?"))
+            except OSError:
+                pass
+        shader_stamp = "-DHOOKSHOT_SHADER_STAMP=0x%sull" % (chosen or computed)
         vflags = target() + CPU + (["-fPIC", "-I" + POSIX, "-D_GNU_SOURCE"] if LINUX else []) + [   # (hookshot: the replay is the frame's limit now)
             # (what the code takes for granted, which newer C++ libraries bring in by themselves and older ones do not: issue 48)
             "-include", "algorithm", "-include", "cstdio", "-include", "cstdlib", "-include", "cstring", "-include", "functional",

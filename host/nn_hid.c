@@ -938,7 +938,12 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
         scripted_background = getenv("HOS_INPUT_SCRIPT_BACKGROUND") != NULL;
         if (scripted_background) hos_log("hid: scripted input runs with the game in the background (HOS_INPUT_SCRIPT_BACKGROUND)");
     }
-    if (!game_in_front() && !scripted_background) {   /* (the pads alone, when the player asked for them behind other windows) */
+    /* (Mako 4.1) behind another window the player's devices stay out, a background test's included: its own presses were
+       added above, and with HOS_INPUT_SCRIPT_BACKGROUND the pads were read too, so a pad left on the desk (or the player's,
+       in their own game) pressed B in the test's menus and broke its runs. The pads only when asked for (the menu's
+       Controller in background, HOS_INPUT_BACKGROUND) */
+    if (!game_in_front()) {   /* (the pads alone, when the player asked for them behind other windows) */
+        (void)scripted_background;
         static const char *env;
         static int looked;
         if (!looked) looked = 1, env = getenv("HOS_INPUT_BACKGROUND");

@@ -180,8 +180,21 @@ Code read_code(const nvn_stage_data& sd) {
     if (!no_cache && c.ok) {
         st_parsed_new++;
         std::lock_guard lk(parsed_mu);
-        if (parsed_by_key.size() >= 2048) parsed_by_key.clear();
-        parsed_by_key[key] = c;
+        // (bounded by bytes, 160 MB, not 2048 codes then all of them dropped: an area's programs past 2048 emptied it, and the
+        // codes after were parsed again, ~40% of all lookups in a field walk. A quarter let go when full, the rest kept)
+        static const uint64_t cap = (uint64_t)(getenv("RX_VK_CODE_CACHE_MB") ? std::max(8, atoi(getenv("RX_VK_CODE_CACHE_MB"))) : 160) << 20;
+        static uint64_t held = 0;
+        auto bytes_of = [](const Code& x) { return (uint64_t)(x.code.size() * 8 + x.c1.size() + sizeof(Code) + 64); };
+        if (held + bytes_of(c) > cap) {
+            for (auto it = parsed_by_key.begin(); it != parsed_by_key.end() && held > cap / 4 * 3;) {
+                held -= std::min(held, bytes_of(it->second));
+                it = parsed_by_key.erase(it);
+            }
+            static int logged;
+            if (logged++ < 5) logf("vk: parsed codes kept by their key: %zu held, a quarter let go (%llu MB)", parsed_by_key.size(),
+                                   (unsigned long long)(held >> 20));
+        }
+        if (parsed_by_key.emplace(key, c).second) held += bytes_of(c);
     }
     return c;
 }
